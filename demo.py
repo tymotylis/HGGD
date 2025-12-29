@@ -296,6 +296,8 @@ if __name__ == '__main__':
     ori_depth = np.clip(ori_depth, 0, 1000)
     ori_rgb = torch.from_numpy(ori_rgb).permute(2, 1, 0)[None]
     ori_rgb = ori_rgb.to(device='cuda', dtype=torch.float32)
+    # Casting from uint8 to int16. Should be fine
+    ori_depth = ori_depth.astype('int16')
     ori_depth = torch.from_numpy(ori_depth).T[None]
     ori_depth = ori_depth.to(device='cuda', dtype=torch.float32)
 
