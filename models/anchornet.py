@@ -205,8 +205,22 @@ class AnchorGraspNet(nn.Module):
 
     def forward(self, x):
         # use backbone to get downscaled features
+        # ResNet mode 34 (Meaning it's made of BasicBlock in a [3, 4, 6, 3] configuration)
+        # The layers are:
+            # 2D Convolution with in_channels = 4, out_channels = 8, kernel_size = 7, stride = 2, and padding = 3
+            # Batch normalization
+            # Leaky ReLU
+            # Resnet Layer made of BasicBlock with out_channels = 16, num_block = 3, and stride = 2
+            # Resnet Layer made of BasicBlock with out_channels = 32, num_block = 4, and stride = 2
+            # Resnet Layer made of BasicBlock with out_channels = 64, num_block = 6, and stride = 2
+            # Resnet Layer made of BasicBlock with out_channels = 128, num_block = 3, and stride = 2
         xs = self.backbone(x)
-        # use transposeconve or upsampling + conv to get perpoint features
+        # use transposeconve to get perpoint features
+        # 5 trconvolution layers. Each layer is made of:
+            # ConvTranspose2d
+            # Batch Normalization   
+        # On the second layer the 3 maps get saved and the features (later used in LocalNet) get saved
+            # The heatmaps get further convolution reshaping ...
         x = xs[-1]
         for i, layer in enumerate(self.trconv):
             # skip connection

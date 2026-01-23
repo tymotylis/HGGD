@@ -55,11 +55,13 @@ def get_group_pc(pc: torch.Tensor,
                  group_num,
                  grasp_widths,
                  min_points=32,
-                 is_training=True):
+                 is_training=True,
+                 use_cuda=True):
     batch_size, feature_len = pc.shape[0], pc.shape[2]
+    device = 'cuda' if use_cuda else 'cpu'
     pc_group = torch.zeros((0, group_num, feature_len),
                            dtype=torch.float32,
-                           device='cuda')
+                           device=device)
     valid_local_centers = []
     valid_center_masks = []
     # get the points around one scored center
@@ -69,28 +71,30 @@ def get_group_pc(pc: torch.Tensor,
             # no need to append pc_group
             valid_local_centers.append(local_centers[i])
             valid_center_masks.append(
-                torch.ones((0, ), dtype=torch.bool, device='cuda'))
+                torch.ones((0, ), dtype=torch.bool, device=device))
             continue
         # cal distance and get masks (for all centers)
         dis = euclid_distance(local_centers[i], pc[i])
         # using grasp width for ball segment
         grasp_widths_tensor = torch.from_numpy(grasp_widths[i]).to(
-            device='cuda', dtype=torch.float32)[..., None]
+            device=device, dtype=torch.float32)[..., None]
         # add noise when trainning
         width_scale = 1
         if is_training:
             # 0.8 ~ 1.2
             width_scale = 0.8 + 0.4 * torch.rand(
-                (len(grasp_widths_tensor), 1), device='cuda')
+                (len(grasp_widths_tensor), 1), device=device)
         masks = (dis < grasp_widths_tensor * width_scale)
         # select valid center from all center
         center_cnt = len(local_centers[i])
-        valid_mask = torch.ones((center_cnt, ), dtype=torch.bool).cuda()
+        valid_mask = torch.ones((center_cnt, ), dtype=torch.bool)
+        if use_cuda:
+            valid_mask = valid_mask.cuda()
         # concat pc first
         max_pc_cnt = max(group_num, masks.sum(1).max())
         partial_pcs = torch.zeros((center_cnt, max_pc_cnt, feature_len),
-                                  device='cuda')
-        lengths = torch.zeros((center_cnt, ), device='cuda')
+                                  device=device)
+        lengths = torch.zeros((center_cnt, ), device=device)
         for j in range(center_cnt):
             # seg points
             partial_points = pc[i, masks[j]]
@@ -98,7 +102,7 @@ def get_group_pc(pc: torch.Tensor,
             if point_cnt < group_num:
                 if point_cnt > min_points:
                     idxs = torch.randint(point_cnt, (group_num, ),
-                                         device='cuda')
+                                         device=device)
                     # idxs = np.random.choice(point_cnt, group_num, replace=True)
                     partial_points = partial_points[idxs]
                     point_cnt = group_num
@@ -110,7 +114,7 @@ def get_group_pc(pc: torch.Tensor,
             lengths[j] = point_cnt
         # add a little noise to avoid repeated points
         partial_pcs[..., :3] += torch.randn(partial_pcs.shape[:-1] + (3, ),
-                                            device='cuda') * 5e-4
+                                            device=device) * 5e-4
         # doing fps
         _, idxs = sample_farthest_points(partial_pcs[..., :3],
                                          lengths=lengths,
@@ -134,7 +138,8 @@ def center2dtopc(rect_ggs: List,
                  depths: torch.Tensor,
                  output_size,
                  append_random_center=True,
-                 is_training=True):
+                 is_training=True,
+                 use_cuda=True):
     # add extra axis when valid, avoid dim errors
     batch_size = depths.shape[0]
     center_batch_pc = []
@@ -164,9 +169,13 @@ def center2dtopc(rect_ggs: List,
         intrinsics = get_camera_intrinsic()
         fx, fy = intrinsics[0, 0], intrinsics[1, 1]
         cx, cy = intrinsics[0, 2], intrinsics[1, 2]
-        center_tensor = torch.from_numpy(center_2d).float().cuda()
+        center_tensor = torch.from_numpy(center_2d).float()
+        if use_cuda:
+            center_tensor = center_tensor.cuda()
         # add delta depth
-        delta_d = torch.from_numpy(center_depth).cuda()
+        delta_d = torch.from_numpy(center_depth)
+        if use_cuda:
+            delta_d = delta_d.cuda()
         z = (d[mask] + delta_d[mask]) / 1000.0
         x = z / fx * (center_tensor[mask, 0] - cx)
         y = z / fy * (center_tensor[mask, 1] - cy)
@@ -192,7 +201,9 @@ def center2dtopc(rect_ggs: List,
             mask[j] = True
             # convert
             new_center = torch.from_numpy(convert_2d_to_3d(
-                x, y, cur_d.cpu())).cuda()
+                x, y, cur_d.cpu()))
+            if use_cuda:
+                new_center = new_center.cuda()
             cur_pc_tensor = torch.concat([cur_pc_tensor, new_center[None]], 0)
 
         # modify rect_ggs and append
@@ -204,7 +215,7 @@ def center2dtopc(rect_ggs: List,
         # add small noise to local centers (when train)
         if is_training:
             cur_pc_tensor += torch.randn(*cur_pc_tensor.shape,
-                                         device='cuda') * 5e-3
+                                         device=('cuda' if use_cuda else 'cpu')) * 5e-3
         center_batch_pc.append(cur_pc_tensor)
     return center_batch_pc
 
@@ -292,7 +303,7 @@ def select_area(loc_map, top, bottom, left, right, grid_size, overlap):
     return local_areas
 
 
-def select_2d_center(loc_maps, center_num, reduce='max', grid_size=8) -> List:
+def select_2d_center(loc_maps, center_num, reduce='max', grid_size=8, use_cuda=True) -> List:
     # deal with validation stage
     if isinstance(loc_maps, np.ndarray):
         loc_maps = loc_maps.copy()
@@ -302,7 +313,9 @@ def select_2d_center(loc_maps, center_num, reduce='max', grid_size=8) -> List:
         loc_maps = loc_maps[None]
     # using torch to downsample
     if isinstance(loc_maps, np.ndarray):
-        loc_maps = torch.from_numpy(loc_maps).cuda()
+        loc_maps = torch.from_numpy(loc_maps)
+        if use_cuda:
+            loca_maps = loc_maps.cuda()
     batch_size = loc_maps.shape[0]
     center_2ds = []
     # using downsampled grid to avoid center too near
@@ -337,7 +350,9 @@ def select_2d_center(loc_maps, center_num, reduce='max', grid_size=8) -> List:
         # using jit to faster get local areas
         local_areas = select_area(loc_maps[i].cpu().numpy(), top, bottom, left,
                                   right, grid_size, overlap)
-        local_areas = torch.from_numpy(local_areas).float().cuda()
+        local_areas = torch.from_numpy(local_areas).float()
+        if use_cuda:
+            local_areas = local_areas.cuda()
         # batch calculate
         grid_idxs = torch.argmax(local_areas, dim=1).cpu().numpy()
         local_max[:, 0] = top + grid_idxs // (right - left)
@@ -353,14 +368,16 @@ def data_process(points: torch.Tensor,
                  group_num,
                  output_size,
                  min_points=32,
-                 is_training=True):
+                 is_training=True,
+                 use_cuda=True):
     # select partial pc centers
     local_center = center2dtopc(rect_ggs,
                                 center_num,
                                 depths,
                                 output_size,
                                 append_random_center=False,
-                                is_training=is_training)
+                                is_training=is_training,
+                                use_cuda=use_cuda)
     # get grasp width for pc segmentation
     grasp_widths = []
     for rect_gg in rect_ggs:
@@ -372,7 +389,8 @@ def data_process(points: torch.Tensor,
         group_num,
         grasp_widths,
         min_points=min_points,
-        is_training=is_training)
+        is_training=is_training,
+        use_cuda=use_cuda)
     # modify rect_ggs
     for i, mask in enumerate(valid_center_masks):
         rect_ggs[i] = rect_ggs[i][mask.cpu().numpy()]

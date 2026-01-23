@@ -18,41 +18,42 @@ from models.anchornet import AnchorGraspNet
 from models.localgraspnet import PointMultiGraspNet
 from train_utils import *
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--checkpoint-path', default=None)
+def load_parameters_parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--checkpoint-path', default=None)
 
-# image input
-parser.add_argument('--rgb-path')
-parser.add_argument('--depth-path')
+    # image input
+    parser.add_argument('--rgb-path')
+    parser.add_argument('--depth-path')
 
-# 2d
-parser.add_argument('--input-h', type=int)
-parser.add_argument('--input-w', type=int)
-parser.add_argument('--sigma', type=int, default=10)
-parser.add_argument('--use-depth', type=int, default=1)
-parser.add_argument('--use-rgb', type=int, default=1)
-parser.add_argument('--ratio', type=int, default=8)
-parser.add_argument('--anchor-k', type=int, default=6)
-parser.add_argument('--anchor-w', type=float, default=50.0)
-parser.add_argument('--anchor-z', type=float, default=20.0)
-parser.add_argument('--grid-size', type=int, default=8)
+    # 2d
+    parser.add_argument('--input-h', type=int)
+    parser.add_argument('--input-w', type=int)
+    parser.add_argument('--sigma', type=int, default=10)
+    parser.add_argument('--use-depth', type=int, default=1)
+    parser.add_argument('--use-rgb', type=int, default=1)
+    parser.add_argument('--ratio', type=int, default=8)
+    parser.add_argument('--anchor-k', type=int, default=6)
+    parser.add_argument('--anchor-w', type=float, default=50.0)
+    parser.add_argument('--anchor-z', type=float, default=20.0)
+    parser.add_argument('--grid-size', type=int, default=8)
 
-# pc
-parser.add_argument('--anchor-num', type=int)
-parser.add_argument('--all-points-num', type=int)
-parser.add_argument('--center-num', type=int)
-parser.add_argument('--group-num', type=int)
+    # pc
+    parser.add_argument('--anchor-num', type=int)
+    parser.add_argument('--all-points-num', type=int)
+    parser.add_argument('--center-num', type=int)
+    parser.add_argument('--group-num', type=int)
 
-# grasp detection
-parser.add_argument('--heatmap-thres', type=float, default=0.01)
-parser.add_argument('--local-k', type=int, default=10)
-parser.add_argument('--local-thres', type=float, default=0.01)
-parser.add_argument('--rotation-num', type=int, default=1)
+    # grasp detection
+    parser.add_argument('--heatmap-thres', type=float, default=0.01)
+    parser.add_argument('--local-k', type=int, default=10)
+    parser.add_argument('--local-thres', type=float, default=0.01)
+    parser.add_argument('--rotation-num', type=int, default=1)
 
-# others
-parser.add_argument('--random-seed', type=int, default=123, help='Random seed')
+    # others
+    parser.add_argument('--random-seed', type=int, default=123, help='Random seed')
 
-args = parser.parse_args()
+    args = parser.parse_args()
 
 
 class PointCloudHelper:
@@ -83,18 +84,26 @@ class PointCloudHelper:
     def to_scene_points(self,
                         rgbs: torch.Tensor,
                         depths: torch.Tensor,
-                        include_rgb=True):
+                        include_rgb=True,
+                        use_cuda=True):
         batch_size = rgbs.shape[0]
         feature_len = 3 + 3 * include_rgb
         points_all = -torch.ones(
             (batch_size, self.all_points_num, feature_len),
-            dtype=torch.float32).cuda()
+            dtype=torch.float32)
+        if use_cuda:
+            points_all = points_all.cuda()
         # cal z
         idxs = []
         masks = (depths > 0)
         cur_zs = depths / 1000.0
-        cur_xs = self.points_x.cuda() * cur_zs
-        cur_ys = self.points_y.cuda() * cur_zs
+
+        if use_cuda:
+            cur_xs = self.points_x.cuda() * cur_zs
+            cur_ys = self.points_y.cuda() * cur_zs
+        else:
+            cur_xs = self.points_x * cur_zs
+            cur_ys = self.points_y * cur_zs
         for i in range(batch_size):
             # convert point cloud to xyz maps
             points = torch.stack([cur_xs[i], cur_ys[i], cur_zs[i]], axis=-1)
@@ -119,29 +128,66 @@ class PointCloudHelper:
                 points_all[i] = points
         return points_all, idxs, masks
 
-    def to_xyz_maps(self, depths):
+    def to_xyz_maps(self, depths, use_cuda=True):
         # downsample
         downsample_depths = F.interpolate(depths[:, None],
                                           size=self.output_shape,
-                                          mode='nearest').squeeze(1).cuda()
+                                          mode='nearest').squeeze(1)
+        if use_cuda:
+            downsample_depths = downsample_depths.cuda()
         # convert xyzs
         cur_zs = downsample_depths / 1000.0
-        cur_xs = self.points_x_downscale.cuda() * cur_zs
-        cur_ys = self.points_y_downscale.cuda() * cur_zs
+        if use_cuda:
+            cur_xs = self.points_x_downscale.cuda() * cur_zs
+            cur_ys = self.points_y_downscale.cuda() * cur_zs
+        else:
+            cur_xs = self.points_x_downscale * cur_zs
+            cur_ys = self.points_y_downscale * cur_zs
         xyzs = torch.stack([cur_xs, cur_ys, cur_zs], axis=-1)
         return xyzs.permute(0, 3, 1, 2)
 
 
-def inference(view_points,
-              xyzs,
-              x,
+def inference(ori_rgb,
               ori_depth,
               vis_heatmap=False,
-              vis_grasp=True):
+              vis_grasp=True,
+              output_times=False,
+              use_cuda=True):
     with torch.no_grad():
+        preprocess_start_time = time()
+
+        device = 'cuda' if use_cuda else 'cpu'
+        ori_rgb = ori_rgb / 255.0
+        ori_depth = np.clip(ori_depth, 0, 1000)
+        ori_rgb = torch.from_numpy(ori_rgb).permute(2, 1, 0)[None]
+        ori_rgb = ori_rgb.to(device=device, dtype=torch.float32)
+        # Casting from uint8 to int16. Should be fine
+        ori_depth = ori_depth.astype('int16')
+        ori_depth = torch.from_numpy(ori_depth).T[None]
+        ori_depth = ori_depth.to(device=device, dtype=torch.float32)
+
+        # get scene points
+        view_points, _, _ = pc_helper.to_scene_points(ori_rgb,
+                                                    ori_depth,
+                                                    include_rgb=True,
+                                                    use_cuda=use_cuda)
+        # get xyz maps
+        xyzs = pc_helper.to_xyz_maps(ori_depth, use_cuda=use_cuda)
+
+        # pre-process
+        rgb = F.interpolate(ori_rgb, (args.input_w, args.input_h))
+        depth = F.interpolate(ori_depth[None], (args.input_w, args.input_h))[0]
+        depth = depth / 1000.0
+        depth = torch.clip((depth - depth.mean()), -1, 1)
+        # generate 2d input
+        x = torch.concat([depth[None], rgb], 1)
+        x = x.to(device=device, dtype=torch.float32)
+
         # 2d prediction
+        anchornet_start_time = time()
         pred_2d, perpoint_features = anchornet(x)
 
+        process_start_time=time()
         loc_map, cls_mask, theta_offset, height_offset, width_offset = \
             anchor_output_process(*pred_2d, sigma=args.sigma)
 
@@ -159,7 +205,8 @@ def inference(view_points,
                                   center_num=args.center_num,
                                   grid_size=args.grid_size,
                                   grasp_nms=args.grid_size,
-                                  reduce='max')
+                                  reduce='max',
+                                  use_cuda=use_cuda)
 
         # check 2d result
         if rect_gg.size == 0:
@@ -196,7 +243,8 @@ def inference(view_points,
             args.center_num,
             args.group_num, (args.input_w, args.input_h),
             min_points=32,
-            is_training=False)
+            is_training=False,
+            use_cuda=use_cuda)
         rect_gg = rect_ggs[0]
         # batch_size == 1 when valid
         points_all = points_all.squeeze()
@@ -209,12 +257,14 @@ def inference(view_points,
         cur_info = np.vstack([g_thetas, g_ws, g_ds])
         grasp_info = np.vstack([grasp_info, cur_info.T])
         grasp_info = torch.from_numpy(grasp_info).to(dtype=torch.float32,
-                                                     device='cuda')
+                                                     device=device)
 
         # localnet
+        localnet_start_time = time()
         _, pred, offset = localnet(pc_group, grasp_info)
 
         # detect 6d grasp from 2d output and 6d output
+        postprocess_start_time = time()
         _, pred_rect_gg = detect_6d_grasp_multi(rect_gg,
                                                 pred,
                                                 offset,
@@ -225,12 +275,27 @@ def inference(view_points,
 
         # collision detect
         pred_grasp_from_rect = pred_rect_gg.to_6d_grasp_group(depth=0.02)
-        pred_gg, _ = collision_detect(points_all,
-                                      pred_grasp_from_rect,
-                                      mode='graspnet')
+        #pred_gg, _ = collision_detect(points_all,
+        #                              pred_grasp_from_rect,
+        #                              mode='graspnet')
+        print("Warning! Collission detection is disabled")
 
         # nms
-        pred_gg = pred_gg.nms()
+        ##pred_gg = pred_gg.nms()
+
+        finished_time = time()
+
+        # Output the times
+        if output_times:
+            print()
+            print('total time:', (finished_time - preprocess_start_time) * 1000, " ms")
+            print('pre-processing time:', (anchornet_start_time - preprocess_start_time) * 1000, " ms")
+            print('AnchorNet time:', (process_start_time - anchornet_start_time) * 1000, " ms")
+            print('processing time:', (localnet_start_time - process_start_time) * 1000, " ms")
+            print('LocalNet time:', (postprocess_start_time - localnet_start_time) * 1000, " ms")
+            print('post-processing time:', (finished_time - postprocess_start_time) * 1000, " ms")
+            print()
+
 
         # show grasp
         if vis_grasp:
@@ -242,11 +307,10 @@ def inference(view_points,
             vispc.points = o3d.utility.Vector3dVector(points)
             vispc.colors = o3d.utility.Vector3dVector(colors)
             o3d.visualization.draw_geometries([vispc] + grasp_geo)
-        return pred_gg
+        return pred_grasp_from_rect #pred_gg
 
-
-if __name__ == '__main__':
-    # set up pc transform helper
+def setup_inference(use_cuda):
+     # set up pc transform helper
     pc_helper = PointCloudHelper(all_points_num=args.all_points_num)
 
     # set torch and gpu setting
@@ -255,8 +319,10 @@ if __name__ == '__main__':
     if torch.cuda.is_available():
         torch.backends.cudnn.enabled = True
         torch.backends.cudnn.benchmark = False
+        print("CUDA enabled")
     else:
-        raise RuntimeError('CUDA not available')
+        use_cuda = False
+        print("CUDA disabled")
 
     # random seed
     random.seed(args.random_seed)
@@ -270,15 +336,25 @@ if __name__ == '__main__':
     localnet = PointMultiGraspNet(info_size=3, k_cls=args.anchor_num**2)
 
     # gpu
-    anchornet = anchornet.cuda()
-    localnet = localnet.cuda()
+    anchornet = anchornet
+    localnet = localnet
+
+    if use_cuda:
+        anchornet = anchornet.cuda()
+        localnet = localnet.cuda()
 
     # Load checkpoint
-    check_point = torch.load(args.checkpoint_path)
+    if use_cuda:
+        check_point = torch.load(args.checkpoint_path)
+    else:
+        check_point = torch.load(args.checkpoint_path, map_location=torch.device("cpu"))
+
     anchornet.load_state_dict(check_point['anchor'])
     localnet.load_state_dict(check_point['local'])
     # load checkpoint
-    basic_ranges = torch.linspace(-1, 1, args.anchor_num + 1).cuda()
+    basic_ranges = torch.linspace(-1, 1, args.anchor_num + 1)
+    if use_cuda:
+        basic_ranges = basic_ranges.cuda()
     basic_anchors = (basic_ranges[1:] + basic_ranges[:-1]) / 2
     anchors = {'gamma': basic_anchors, 'beta': basic_anchors}
     anchors['gamma'] = check_point['gamma']
@@ -290,50 +366,30 @@ if __name__ == '__main__':
     anchornet.eval()
     localnet.eval()
 
+if __name__ == '__main__':
+    load_parameters_parser()
+    setup_inference()
     # read image and conver to tensor
     ori_depth = np.array(Image.open(args.depth_path))
     ori_rgb = np.array(Image.open(args.rgb_path)) / 255.0
-    ori_depth = np.clip(ori_depth, 0, 1000)
-    ori_rgb = torch.from_numpy(ori_rgb).permute(2, 1, 0)[None]
-    ori_rgb = ori_rgb.to(device='cuda', dtype=torch.float32)
-    # Casting from uint8 to int16. Should be fine
-    ori_depth = ori_depth.astype('int16')
-    ori_depth = torch.from_numpy(ori_depth).T[None]
-    ori_depth = ori_depth.to(device='cuda', dtype=torch.float32)
-
-    # get scene points
-    view_points, _, _ = pc_helper.to_scene_points(ori_rgb,
-                                                  ori_depth,
-                                                  include_rgb=True)
-    # get xyz maps
-    xyzs = pc_helper.to_xyz_maps(ori_depth)
-
-    # pre-process
-    rgb = F.interpolate(ori_rgb, (args.input_w, args.input_h))
-    depth = F.interpolate(ori_depth[None], (args.input_w, args.input_h))[0]
-    depth = depth / 1000.0
-    depth = torch.clip((depth - depth.mean()), -1, 1)
-    # generate 2d input
-    x = torch.concat([depth[None], rgb], 1)
-    x = x.to(device='cuda', dtype=torch.float32)
 
     # inference
-    pred_gg = inference(view_points,
-                        xyzs,
-                        x,
+    pred_gg = inference(ori_rgb,
                         ori_depth,
-                        vis_heatmap=True,
-                        vis_grasp=True)
-
+                        vis_heatmap=False,
+                        vis_grasp=False, 
+                        output_times=True,
+                        use_cuda=use_cuda)
     # time test
     start = time()
     T = 100
     for _ in range(T):
-        pred_gg = inference(view_points,
-                            xyzs,
-                            x,
+        pred_gg = inference(ori_rgb,
                             ori_depth,
                             vis_heatmap=False,
-                            vis_grasp=False)
-        torch.cuda.synchronize()
+                            vis_grasp=False, 
+                            output_times=False,
+                            use_cuda=use_cuda)
+        if use_cuda:
+            torch.cuda.synchronize()
     print('avg time ==', (time() - start) / T * 1e3, 'ms')

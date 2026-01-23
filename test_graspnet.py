@@ -9,6 +9,7 @@ import open3d as o3d
 import torch
 from scipy.signal import medfilt2d
 from torch.utils.data import DataLoader
+from pympler import asizeof
 
 from customgraspnetAPI import Grasp as GraspNetGrasp
 from customgraspnetAPI import GraspGroup as GraspNetGraspGroup
@@ -125,18 +126,35 @@ def inference():
     logging.info('Using saved anchors')
     print('-> loaded checkpoint %s ' % (args.checkpoint_path))
 
+    print('total checkpoint size ', asizeof.asizeof(check_point)/1000, "kB")
+    print('optimizer size ', asizeof.asizeof(check_point['optimizer'])/1000, "kB")
+    print('anchornet size ', asizeof.asizeof(check_point['anchor'])/1000, "kB")
+    print('localnet size ', asizeof.asizeof(check_point['local'])/1000, "kB")
+    print('anchors\' gamma size ', asizeof.asizeof(check_point['gamma'])/1000, "kB")
+    print('anchors\' beta size ', asizeof.asizeof(check_point['beta'])/1000, "kB")
+
+    model_parameters = filter(lambda p: p.requires_grad, anchornet.parameters())
+    params = sum([np.prod(p.size()) for p in model_parameters])
+    print("AnchorNet parameter count: ", params)
+
+    model_parameters = filter(lambda p: p.requires_grad, localnet.parameters())
+    params = sum([np.prod(p.size()) for p in model_parameters])
+    print("LocalNet parameter count: ", params)
+
     # network eval mode
     anchornet.eval()
     localnet.eval()
     # stop rot and zoom for validation
     test_dataset.eval()
 
-    time_2d, time_data, time_6d, time_colli, time_nms = 0, 0, 0, 0, 0
+    time_2d, time_data, time_6d, time_colli, time_nms, localnet_time, anchornet_time = 0, 0, 0, 0, 0, 0, 0
 
     batch_idx = -1
     vis_id = []
     with torch.no_grad():
         for anchor_data, rgb, ori_depth, grasppaths in test_data:
+            #if batch_idx >= 256:
+            #    break
             batch_idx += 1
 
             # medfilt first
@@ -161,7 +179,12 @@ def inference():
             # 2d prediction
             x, _, _, _, _ = anchor_data
             x = x.cuda(non_blocking=True)
+
+            start2 = time()
             pred_2d, perpoint_features = anchornet(x)
+
+            if batch_idx >= 1:
+                anchornet_time += time() - start2
 
             loc_map, cls_mask, theta_offset, height_offset, width_offset = \
                 anchor_output_process(*pred_2d, sigma=args.sigma)
@@ -234,6 +257,9 @@ def inference():
 
             # get gamma and beta classification result
             _, pred, offset = localnet(pc_group, grasp_info)
+
+            if batch_idx >= 1:
+                localnet_time += time() - start
 
             # detect 6d grasp from 2d output and 6d output
             pred_grasp, pred_rect_gg = detect_6d_grasp_multi(
@@ -317,12 +343,14 @@ def inference():
     time_6d = time_6d / batch_idx * 1000
     time_colli = time_colli / batch_idx * 1000
     time_nms = time_nms / batch_idx * 1000
+    anchornet_time = anchornet_time / batch_idx * 1000
+    anchornet_time = localnet_time / batch_idx * 1000
     logging.info('Time stats:')
     logging.info(
         f'Total: {time_2d + time_data + time_6d + time_colli + time_nms:.3f} ms'
     )
     logging.info(
-        f'2d: {time_2d:.3f} ms  data: {time_data:.3f} ms  6d: {time_6d:.3f} ms  colli: {time_colli:.3f} ms  nms: {time_nms:.3f} ms'
+        f'2d: {time_2d:.3f} ms (anchornet: {anchornet_time:.3f} ms)  data: {time_data:.3f} ms  6d: {time_6d:.3f} ms (localnet: {localnet_time:.3f} ms) colli: {time_colli:.3f} ms  nms: {time_nms:.3f} ms'
     )
 
 
