@@ -6,7 +6,7 @@ import torch
 from numba import njit
 from torchvision.transforms.functional import gaussian_blur
 
-from dataset.collision_detector import ModelFreeCollisionDetector
+#from dataset.collision_detector import ModelFreeCollisionDetector
 
 from .config import get_camera_intrinsic
 from .grasp import RectGrasp, RectGraspGroup
@@ -98,7 +98,8 @@ def detect_2d_grasp(loc_map,
                     rotation_num=1,
                     reduce='max',
                     grid_size=8,
-                    grasp_nms=8) -> RectGraspGroup:
+                    grasp_nms=8,
+                    use_cuda=True) -> RectGraspGroup:
     """detect 2d grasp from GHM heatmaps.
 
     Args:
@@ -124,7 +125,8 @@ def detect_2d_grasp(loc_map,
     local_max = select_2d_center(loc_map,
                                  center_num * 10,
                                  grid_size=grid_size,
-                                 reduce=reduce)
+                                 reduce=reduce,
+                                 use_cuda=use_cuda)
     centers = []
     scores = []
     depths = []

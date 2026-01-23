@@ -43,15 +43,18 @@ class PointMultiGraspNet(nn.Module):
                     nn.init.constant_(m.bias, 0)
 
     def forward(self, points, info):
-        # fuse pixel to points
         points = points.transpose(1, 2)
         # pointnet
+        # Used to extract features from the pointcloud 
         features = self.pointnet(points)
         # mlp
+        # info - the features extracted from the RGBD image
         point_features = self.point_layer(features)
         info_features = self.info_layer(info)
         x = torch.cat([point_features, info_features], 1)
         # get anchors and offset
+        # Anchors - a multi-label classification gives you the indexes of selected anchors
+        # Offset - the 3D center offset of the anchor
         pred = self.anchor_mlp(x)
         offset = self.offset_mlp(x).view(-1, self.k_cls, 3)
         return features, pred, offset
