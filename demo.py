@@ -10,51 +10,70 @@ import torch.nn.functional as F
 from matplotlib import pyplot as plt
 from PIL import Image
 
-from dataset.config import get_camera_intrinsic
-from dataset.evaluation import (anchor_output_process, collision_detect,
+from .dataset.config import get_camera_intrinsic
+from .dataset.evaluation import (anchor_output_process, collision_detect,
                                 detect_2d_grasp, detect_6d_grasp_multi)
-from dataset.pc_dataset_tools import data_process, feature_fusion
-from models.anchornet import AnchorGraspNet
-from models.localgraspnet import PointMultiGraspNet
-from train_utils import *
+from .dataset.pc_dataset_tools import data_process, feature_fusion
+from .models.anchornet import AnchorGraspNet
+from .models.localgraspnet import PointMultiGraspNet
+from .train_utils import *
+
+
+#d
+parser = argparse.ArgumentParser()
+parser.add_argument('--checkpoint-path', default=None)
+
+# image input
+parser.add_argument('--rgb-path')
+parser.add_argument('--depth-path')
+
+# 2d
+parser.add_argument('--input-h', type=int)
+parser.add_argument('--input-w', type=int)
+parser.add_argument('--sigma', type=int, default=10)
+parser.add_argument('--use-depth', type=int, default=1)
+parser.add_argument('--use-rgb', type=int, default=1)
+parser.add_argument('--ratio', type=int, default=8)
+parser.add_argument('--anchor-k', type=int, default=6)
+parser.add_argument('--anchor-w', type=float, default=50.0)
+parser.add_argument('--anchor-z', type=float, default=20.0)
+parser.add_argument('--grid-size', type=int, default=8)
+
+# pc
+parser.add_argument('--anchor-num', type=int)
+parser.add_argument('--all-points-num', type=int)
+parser.add_argument('--center-num', type=int)
+parser.add_argument('--group-num', type=int)
+
+# grasp detection
+parser.add_argument('--heatmap-thres', type=float, default=0.01)
+parser.add_argument('--local-k', type=int, default=10)
+parser.add_argument('--local-thres', type=float, default=0.01)
+parser.add_argument('--rotation-num', type=int, default=1)
+
+# others
+parser.add_argument('--random-seed', type=int, default=123, help='Random seed')
+
+args = parser.parse_args()
 
 def load_parameters_parser():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--checkpoint-path', default=None)
-
-    # image input
-    parser.add_argument('--rgb-path')
-    parser.add_argument('--depth-path')
-
-    # 2d
-    parser.add_argument('--input-h', type=int)
-    parser.add_argument('--input-w', type=int)
-    parser.add_argument('--sigma', type=int, default=10)
-    parser.add_argument('--use-depth', type=int, default=1)
-    parser.add_argument('--use-rgb', type=int, default=1)
-    parser.add_argument('--ratio', type=int, default=8)
-    parser.add_argument('--anchor-k', type=int, default=6)
-    parser.add_argument('--anchor-w', type=float, default=50.0)
-    parser.add_argument('--anchor-z', type=float, default=20.0)
-    parser.add_argument('--grid-size', type=int, default=8)
-
-    # pc
-    parser.add_argument('--anchor-num', type=int)
-    parser.add_argument('--all-points-num', type=int)
-    parser.add_argument('--center-num', type=int)
-    parser.add_argument('--group-num', type=int)
-
-    # grasp detection
-    parser.add_argument('--heatmap-thres', type=float, default=0.01)
-    parser.add_argument('--local-k', type=int, default=10)
-    parser.add_argument('--local-thres', type=float, default=0.01)
-    parser.add_argument('--rotation-num', type=int, default=1)
-
-    # others
-    parser.add_argument('--random-seed', type=int, default=123, help='Random seed')
-
-    args = parser.parse_args()
-
+    args.center_num = 48
+    args.anchor_num = 7
+    args.anchor_k = 6
+    args.anchor_w = 50
+    args.anchor_z = 20
+    args.grid_size = 8
+    args.all_points_num = 25600
+    args.group_num = 512
+    args.local_k = 10
+    args.ratio = 8
+    args.input_h = 360
+    args.input_w = 640
+    args.local_thres = 0.01
+    args.heatmap_thres = 0.01
+    args.checkpoint_path = '/home/ty/ws_moveit/src/hggd_server/hggd_server/HGGD_realsense_checkpoint'
+    args.rgb_path = './images/demo_rgb.png'
+    args.depth_path = './images/demo_depth.png'
 
 class PointCloudHelper:
 
@@ -227,7 +246,7 @@ def inference(ori_rgb,
             plt.subplot(223)
             plt.imshow(loc_map.squeeze().T, cmap='jet')
             plt.subplot(224)
-            rect_rgb = rect_gg.plot_rect_grasp_group(resized_rgb, 0)
+            rect_rgb = rect_gg.plot_rect_grasp_group(resized_rgb, 1, False)
             plt.imshow(rect_rgb)
             plt.tight_layout()
             plt.show()
@@ -311,6 +330,7 @@ def inference(ori_rgb,
 
 def setup_inference(use_cuda):
      # set up pc transform helper
+    global pc_helper
     pc_helper = PointCloudHelper(all_points_num=args.all_points_num)
 
     # set torch and gpu setting
@@ -330,6 +350,7 @@ def setup_inference(use_cuda):
     torch.manual_seed(args.random_seed)
 
     # Init the model
+    global anchornet, localnet
     anchornet = AnchorGraspNet(in_dim=4,
                                ratio=args.ratio,
                                anchor_k=args.anchor_k)
@@ -356,6 +377,7 @@ def setup_inference(use_cuda):
     if use_cuda:
         basic_ranges = basic_ranges.cuda()
     basic_anchors = (basic_ranges[1:] + basic_ranges[:-1]) / 2
+    global anchors
     anchors = {'gamma': basic_anchors, 'beta': basic_anchors}
     anchors['gamma'] = check_point['gamma']
     anchors['beta'] = check_point['beta']

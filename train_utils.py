@@ -13,7 +13,7 @@ import torch.multiprocessing as mp
 import torch.optim as optim
 from torchsummary import summary
 
-from customgraspnetAPI import Grasp, GraspGroup
+from .customgraspnetAPI import Grasp, GraspGroup
 
 eval_scale = np.linspace(0.2, 1, 5)
 
