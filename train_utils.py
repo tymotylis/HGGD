@@ -6,14 +6,26 @@ import os
 import random
 import sys
 
+import torch.nn as nn
 import numpy as np
 import tensorboardX
 import torch
 import torch.multiprocessing as mp
 import torch.optim as optim
 from torchsummary import summary
+from tqdm import tqdm
 
 from .customgraspnetAPI import Grasp, GraspGroup
+from .models.anchornet import AnchorGraspNet
+from .models.localgraspnet import PointMultiGraspNet
+from .dataset.pc_dataset_tools import (get_ori_grasp_label, feature_fusion, data_process, get_center_group_label)
+from .dataset.evaluation import (anchor_output_process, calculate_6d_match,
+                                calculate_coverage, calculate_iou_match,
+                                collision_detect, detect_2d_grasp,
+                                detect_6d_grasp_multi)
+from .dataset.grasp import RectGraspGroup
+from .models.losses import compute_anchor_loss, compute_multicls_loss
+
 
 eval_scale = np.linspace(0.2, 1, 5)
 
@@ -200,6 +212,16 @@ def parse_args():
                         default=1.0,
                         help='Grasp Detect Ratio Number')
 
+    # Quantization
+    parser.add_argument('--q_anchornet_type', type=str, default="None", help='None | 8-bit | 4-bit | QAT')
+    parser.add_argument('--q_anchornet_scales', type=str, default="Affine", help='Symmetric | Affine')
+
+    parser.add_argument('--q_localnet_type', type=str, default="None", help='None | Normal | Optimized | QAT')
+    parser.add_argument('--q_localnet_scales', type=str, default="Per-tensor", help='Per-tensor | Per-channel')
+
+    parser.add_argument('--qat_epochs', type=int, default=10)
+    parser.add_argument('--callibration_samples', type=int, default=256)
+
     # Logging etc.
     parser.add_argument('--description',
                         type=str,
@@ -385,13 +407,21 @@ def log_and_save(args,
         elif mode == 'graspnet':
             logging.info('please run test_graspnet.py for graspnet result')
 
+    anchornet_module = anchornet
+    if isinstance(anchornet_module, torch.nn.DataParallel):
+        anchornet_module = anchornet_module.module
+
+    localnet_module = localnet
+    if isinstance(localnet_module, torch.nn.DataParallel):
+        localnet_module = localnet_module.module
+
     # Save best performing network
     if epoch % args.save_freq == 0 and optimizer is not None:
         if epoch < args.pre_epochs:
             torch.save(
                 {
-                    'anchor': anchornet.module.state_dict(),
-                    'local': localnet.module.state_dict(),
+                    'anchor': anchornet_module.state_dict(),
+                    'local': localnet_module.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     'gamma': anchors['gamma'],
                     'beta': anchors['beta']
@@ -399,8 +429,8 @@ def log_and_save(args,
         elif mode == 'regnet':
             torch.save(
                 {
-                    'anchor': anchornet.module.state_dict(),
-                    'local': localnet.module.state_dict(),
+                    'anchor': anchornet_module.state_dict(),
+                    'local': localnet_module.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     'gamma': anchors['gamma'],
                     'beta': anchors['beta']
@@ -412,8 +442,8 @@ def log_and_save(args,
         elif mode == 'graspnet':
             torch.save(
                 {
-                    'anchor': anchornet.module.state_dict(),
-                    'local': localnet.module.state_dict(),
+                    'anchor': anchornet_module.state_dict(),
+                    'local': localnet_module.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     'gamma': anchors['gamma'],
                     'beta': anchors['beta']
@@ -493,3 +523,267 @@ def dump_grasp(epoch, batch_idx, pred_gg, scene_list, dump_dir='./pred'):
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     gg.save_npy(save_path)
+
+dis_criterion = 0.05
+rot_criterion = 0.25
+
+def validate(epoch, anchornet: nn.Module, localnet: nn.Module,
+             val_data: torch.utils.data.DataLoader, anchors: dict, args, use_cuda = True, quantized_mode = False, end_early = -1):
+    device = 'cuda' if use_cuda else 'cpu'
+    fixed_center_num = 48
+
+    # network eval mode
+    anchornet.eval()
+    localnet.eval()
+    # stop rot and zoom for validation
+    val_data.dataset.eval()
+
+    results = {
+        'correct': 0,
+        'total': 0,
+        'loss': 0,
+        'losses': {},
+        'multi_cls_loss': 0,
+        'offset_loss': 0,
+        'offset_loss': 0,
+        'anchor_loss': 0,
+        'cover_cnt': 0,
+        'label_cnt': 0
+    }
+    valid_center_num, total_center_num = 0, 0
+    for scale_factor in eval_scale:
+        thre_dis = dis_criterion * scale_factor
+        thre_rot = rot_criterion * scale_factor
+        results[f'grasp_{scale_factor}'] = np.zeros((2, ))
+        results[f'trans_{thre_dis}'] = np.zeros((2, ))
+        results[f'rot_{thre_rot}'] = np.zeros((2, ))
+
+    # stop rot and zoom for validation
+    batch_idx = -1
+    with torch.no_grad():
+        for anchor_data, rgb, depth, grasppaths in tqdm(val_data,
+                                                        desc=f'Valid_{epoch}',
+                                                        ncols=80):
+            end_early -= 1
+            if end_early == 0:
+                break
+                
+            batch_idx += 1
+            # get scene points
+            points, _, _ = val_data.dataset.helper.to_scene_points(
+                rgb.cuda() if use_cuda else rgb, depth.cuda() if use_cuda else depth, include_rgb=False, use_cuda=use_cuda)
+            # get xyz maps
+            xyzs = val_data.dataset.helper.to_xyz_maps(depth.cuda() if use_cuda else depth, use_cuda)
+            # get labels
+            gg_ori_labels = get_ori_grasp_label(grasppaths)
+            all_grasp_labels = []
+            for grasppath in grasppaths:
+                all_grasp_labels.append(np.load(grasppath))
+
+            # 2d prediction
+            x, y, _, _, _ = anchor_data
+
+            if use_cuda:
+                x = x.cuda()
+            target = [(yy.cuda() if use_cuda else yy) for yy in y]
+
+            if quantized_mode:
+                x = x.cpu()
+
+            outputs = anchornet(x)
+            
+            pred_2d = (outputs[0].cuda(), outputs[1].cuda(), outputs[2].cuda(), outputs[3].cuda(), outputs[4].cuda())
+            perpoint_features = outputs[5].cuda()
+
+            loc_map, cls_mask, theta_offset, depth_offset, width_offset = \
+                anchor_output_process(*pred_2d, sigma=args.sigma)
+
+            # detect 2d grasp (x, y, theta)
+            rect_gg = detect_2d_grasp(loc_map,
+                                      cls_mask,
+                                      theta_offset,
+                                      depth_offset,
+                                      width_offset,
+                                      ratio=args.ratio,
+                                      anchor_k=args.anchor_k,
+                                      anchor_w=args.anchor_w,
+                                      anchor_z=args.anchor_z,
+                                      mask_thre=args.heatmap_thres,
+                                      center_num=fixed_center_num,
+                                      grid_size=args.grid_size,
+                                      grasp_nms=args.grid_size)
+
+            # cal loss
+            anchor_lossd = compute_anchor_loss(pred_2d,
+                                               target,
+                                               loc_a=args.loc_a,
+                                               reg_b=args.reg_b,
+                                               cls_c=args.cls_c)
+            anchor_losses = anchor_lossd['losses']
+            anchor_loss = anchor_lossd['loss']
+
+            # convert back to np.array
+            # rot should be 0, zoom should be 1
+            idx = anchor_data[2].numpy().squeeze()
+            rot = anchor_data[3].numpy().squeeze()
+            zoom_factor = anchor_data[4].numpy().squeeze()
+
+            # 2d bbox validation
+            grasp_label = val_data.dataset.load_grasp_labels(idx)
+            gt_rect_gg = RectGraspGroup()
+            gt_rect_gg.load_from_dict(grasp_label)
+            gt_bbs = val_data.dataset.get_gtbb(gt_rect_gg, rot, zoom_factor)
+
+            # cal 2d iou
+            s = calculate_iou_match(rect_gg[0:1], gt_bbs, thre=0.25)
+            if s:
+                results['correct'] += 1
+            results['total'] += 1
+
+            multi_cls_loss = 0
+            offset_loss = 0
+            if epoch >= args.pre_epochs:
+                # check 2d result
+                if rect_gg.size == 0:
+                    print('No 2d grasp found')
+                    continue
+
+                # feature fusion using knn and max pooling
+                points_all = feature_fusion(points, perpoint_features, xyzs)
+                rect_ggs = [rect_gg]
+                pc_group, valid_local_centers = data_process(
+                    points_all,
+                    depth.cuda() if use_cuda else depth,
+                    rect_ggs,
+                    args.center_num,
+                    args.group_num, (args.input_w, args.input_h),
+                    is_training=False,
+                    use_cuda=use_cuda)
+                rect_gg = rect_ggs[0]  # maybe modify in data process
+                # batch_size == 1 when valid
+                points_all = points_all.squeeze()
+
+                # check pc_group
+                if pc_group.shape[0] == 0:
+                    print('No partial point clouds')
+                    continue
+
+                # get 2d grasp info (not grasp itself) for trainning
+                grasp_info = np.zeros((0, 3), dtype=np.float32)
+                g_thetas = rect_gg.thetas[None]
+                g_ws = rect_gg.widths[None]
+                g_ds = rect_gg.depths[None]
+                cur_info = np.vstack([g_thetas, g_ws, g_ds])
+                grasp_info = np.vstack([grasp_info, cur_info.T])
+                grasp_info = torch.from_numpy(grasp_info).to(
+                    dtype=torch.float32, device=device)
+
+                # get gamma and beta classification result
+                # padding for benchmark
+                zero_pad_num = fixed_center_num - pc_group.shape[0]
+                pc_group = torch.concat([
+                    pc_group,
+                    torch.zeros(zero_pad_num,
+                                pc_group.shape[1],
+                                pc_group.shape[2],
+                                device=device)
+                ])
+                grasp_info = torch.concat([
+                    grasp_info,
+                    torch.zeros(zero_pad_num,
+                                grasp_info.shape[1],
+                                device=device)
+                ])
+
+                if quantized_mode:
+                    pc_group = pc_group.cpu()
+                    grasp_info = grasp_info.cpu()
+
+                localnet_output = localnet([pc_group, grasp_info])
+
+                pred_view = localnet_output[1].cuda()
+                offset = localnet_output[2].cuda()
+                pc_group = pc_group.cuda()
+                grasp_info = grasp_info.cuda()
+
+                valid_num = fixed_center_num - zero_pad_num
+                pc_group = pc_group[:valid_num]
+                pred_view = pred_view[:valid_num]
+                offset = offset[:valid_num]
+
+                # detect 6d grasp from 2d output and 6d output
+                pred_grasp, pred_rect_gg = detect_6d_grasp_multi(
+                    rect_gg,
+                    pred_view,
+                    offset,
+                    valid_local_centers, (args.input_w, args.input_h),
+                    anchors,
+                    k=args.local_k)
+                pred_grasp = torch.from_numpy(pred_grasp).to(
+                    device=device, dtype=torch.float32)
+
+                # get nearest grasp labels
+                gg_labels, _ = get_center_group_label(valid_local_centers,
+                                                      all_grasp_labels,
+                                                      args.local_grasp_num)
+                # get center valid stats
+                total_center_num += len(gg_labels)
+                for gg in gg_labels:
+                    valid_center_num += len(gg) > 0
+                # get loss
+                multi_cls_loss, offset_loss = compute_multicls_loss(
+                    pred_view, offset, gg_labels, grasp_info, anchors, args)
+
+                # collision detect
+                pred_grasp_from_rect = pred_rect_gg.to_6d_grasp_group()
+                pred_gg, valid_mask = collision_detect(points_all,
+                                                       pred_grasp_from_rect,
+                                                       mode='graspnet')
+                pred_grasp = pred_grasp[valid_mask]
+
+                # cal distance to evaluate grasp quality
+                # multi scale thresold
+                gg_ori_labels = get_ori_grasp_label(grasppaths)
+                for scale_factor in eval_scale:
+                    thre_dis = dis_criterion * scale_factor
+                    thre_rot = rot_criterion * scale_factor
+                    r_g, r_d, r_r = calculate_6d_match(pred_grasp,
+                                                       gg_ori_labels,
+                                                       threshold_dis=thre_dis,
+                                                       threshold_rot=thre_rot)
+
+                    results[f'grasp_{scale_factor}'] += r_g
+                    results[f'trans_{thre_dis}'] += r_d
+                    results[f'rot_{thre_rot}'] += r_r
+
+                # cal coverage rate
+                cover_cnt = calculate_coverage(pred_grasp, gg_ori_labels)
+                results['cover_cnt'] += cover_cnt
+                results['label_cnt'] += len(gg_ori_labels)
+
+            # tensorboard record
+            results['loss'] += anchor_loss.item() + multi_cls_loss.item(
+            ) + offset_loss.item()
+            results['anchor_loss'] += anchor_loss.item()
+            if epoch >= args.pre_epochs:
+                results['multi_cls_loss'] += multi_cls_loss.item()
+                results['offset_loss'] += offset_loss.item()
+            for ln, l in anchor_losses.items():
+                if ln not in results['losses']:
+                    results['losses'][ln] = 0
+                results['losses'][ln] += l.item()
+
+    # center stat
+    if total_center_num > 0:
+        logging.info(
+            f'valid center == {valid_center_num / total_center_num:.2f}')
+
+    # loss stat
+    batch_idx += 1
+    results['loss'] /= batch_idx
+    results['anchor_loss'] /= batch_idx
+    results['multi_cls_loss'] /= batch_idx
+    results['offset_loss'] /= batch_idx
+    for ln, l in anchor_losses.items():
+        results['losses'][ln] /= batch_idx
+    return results

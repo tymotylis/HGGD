@@ -212,18 +212,21 @@ class PointCloudHelper:
     def to_scene_points(self,
                         rgbs: torch.Tensor,
                         depths: torch.Tensor,
-                        include_rgb=True):
+                        include_rgb=True,
+                        use_cuda = True):
         batch_size = rgbs.shape[0]
         feature_len = 3 + 3 * include_rgb
         points_all = -torch.ones(
             (batch_size, self.all_points_num, feature_len),
-            dtype=torch.float32).cuda()
+            dtype=torch.float32)
+        if use_cuda:
+            points_all = points_all.cuda()
         # cal z
         idxs = []
         masks = (depths > 0)
         cur_zs = depths / 1000.0
-        cur_xs = self.points_x.cuda() * cur_zs
-        cur_ys = self.points_y.cuda() * cur_zs
+        cur_xs = (self.points_x.cuda() if use_cuda else self.points_x) * cur_zs
+        cur_ys = (self.points_y.cuda() if use_cuda else self.points_y) * cur_zs
         for i in range(batch_size):
             # convert point cloud to xyz maps
             points = torch.stack([cur_xs[i], cur_ys[i], cur_zs[i]], axis=-1)
@@ -247,14 +250,17 @@ class PointCloudHelper:
                 points_all[i] = points
         return points_all, idxs, masks
 
-    def to_xyz_maps(self, depths):
+    def to_xyz_maps(self, depths, use_cuda = True):
         # downsample
         downsample_depths = nnf.interpolate(depths[:, None],
                                             size=self.output_shape,
-                                            mode='nearest').squeeze(1).cuda()
+                                            mode='nearest').squeeze(1)
+        
+        if use_cuda:
+            downsample_depths = downsample_depths.cuda()
         # convert xyzs
         cur_zs = downsample_depths / 1000.0
-        cur_xs = self.points_x_downscale.cuda() * cur_zs
-        cur_ys = self.points_y_downscale.cuda() * cur_zs
+        cur_xs = (self.points_x_downscale.cuda() if use_cuda else self.points_x_downscale) * cur_zs
+        cur_ys = (self.points_y_downscale.cuda() if use_cuda else self.points_y_downscale) * cur_zs
         xyzs = torch.stack([cur_xs, cur_ys, cur_zs], axis=-1)
         return xyzs.transpose(1, 3).transpose(2, 3)

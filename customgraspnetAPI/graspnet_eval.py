@@ -104,6 +104,7 @@ class GraspNetEval(GraspNet):
     def eval_scene(self,
                    scene_id,
                    dump_folder,
+                   reduced_mode = -1,
                    TOP_K=50,
                    return_list=True,
                    vis=False,
@@ -151,7 +152,10 @@ class GraspNetEval(GraspNet):
         score_list_list = []
         collision_list_list = []
 
-        for ann_id in range(256):
+        scenes = 256
+        if reduced_mode != -1:
+            scenes = reduced_mode
+        for ann_id in range(scenes):
             grasp_group = GraspGroup().from_npy(
                 os.path.join(dump_folder, get_scene_name(scene_id),
                              self.camera, '%04d.npy' % (ann_id, )))
@@ -262,7 +266,21 @@ class GraspNetEval(GraspNet):
         else:
             return scene_accuracy, grasp_list_list, score_list_list, collision_list_list
 
-    def parallel_eval_scenes(self, scene_ids, dump_folder, proc=2):
+    def serial_eval_scenes(self, scene_ids, dump_folder, proc=2, reduced_mode = -1):
+        res_list = []
+        for scene_id in scene_ids:
+            print("scene", scene_id)
+            res_list.append(self.eval_scene(scene_id, dump_folder, reduced_mode))
+
+        scene_acc_list = []
+        scene_colli_list = []
+        for res in res_list:
+            cur_list = res.get()
+            scene_acc_list.append(cur_list[0])
+            scene_colli_list.append(cur_list[-1])
+        return scene_acc_list, scene_colli_list
+
+    def parallel_eval_scenes(self, scene_ids, dump_folder, proc=2, reduced_mode = -1):
         '''
         **Input:**
 
@@ -281,7 +299,7 @@ class GraspNetEval(GraspNet):
         res_list = []
         for scene_id in scene_ids:
             res_list.append(
-                p.apply_async(self.eval_scene, (scene_id, dump_folder)))
+                p.apply_async(self.eval_scene, (scene_id, dump_folder, reduced_mode)))
         p.close()
         p.join()
         scene_acc_list = []
@@ -292,10 +310,13 @@ class GraspNetEval(GraspNet):
             scene_colli_list.append(cur_list[-1])
         return scene_acc_list, scene_colli_list
 
-    def eval_scene_lr(self, dump_folder, l, r, proc=2):
+    def eval_scene_lr(self, dump_folder, l, r, proc=2, reduced_mode = -1):
+        print("Evaluating scenes...")
+        
         acc, colli = self.parallel_eval_scenes(scene_ids=list(range(l, r)),
                                                dump_folder=dump_folder,
-                                               proc=proc)
+                                               proc=proc,
+                                               reduced_mode=reduced_mode)
         res = np.array(acc)
         ap = np.mean(res)
         print(

@@ -11,19 +11,24 @@ from scipy.signal import medfilt2d
 from torch.utils.data import DataLoader
 from pympler import asizeof
 
-from customgraspnetAPI import Grasp as GraspNetGrasp
-from customgraspnetAPI import GraspGroup as GraspNetGraspGroup
-from customgraspnetAPI import GraspNetEval
-from dataset.config import camera
-from dataset.evaluation import (anchor_output_process, collision_detect,
+from .customgraspnetAPI import Grasp as GraspNetGrasp
+from .customgraspnetAPI import GraspGroup as GraspNetGraspGroup
+from .customgraspnetAPI import GraspNetEval
+from .dataset.config import camera
+from .dataset.evaluation import (anchor_output_process, collision_detect,
                                 detect_2d_grasp, detect_6d_grasp_multi)
-from dataset.grasp import GraspGroup as HGGDGraspGroup
-from dataset.grasp import RectGraspGroup
-from dataset.graspnet_dataset import GraspnetPointDataset
-from dataset.pc_dataset_tools import data_process, feature_fusion
-from models.anchornet import AnchorGraspNet
-from models.localgraspnet import PointMultiGraspNet
-from train_utils import *
+from .dataset.grasp import GraspGroup as HGGDGraspGroup
+from .dataset.grasp import RectGraspGroup
+from .dataset.graspnet_dataset import GraspnetPointDataset
+from .dataset.pc_dataset_tools import data_process, feature_fusion
+from .models.anchornet import AnchorGraspNet
+from .models.localgraspnet import PointMultiGraspNet
+from .train_utils import *
+
+from .edge_optimization.quantization import *
+#from .edge_optimization.down_sampling import *
+
+#from .edge_optimization.quantization import *
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--checkpoint-path', default=None)
@@ -62,6 +67,13 @@ parser.add_argument('--local-k', type=int, default=10)
 parser.add_argument('--local-thres', type=float, default=0.01)
 parser.add_argument('--rotation-num', type=int, default=1)
 
+# quantization
+parser.add_argument('--q_anchornet_type', type=str, default="None", help='None | 8-bit | 4-bit | QAT')
+parser.add_argument('--q_anchornet_scales', type=str, default="Affine", help='Symmetric | Affine')
+
+parser.add_argument('--q_localnet_type', type=str, default="None", help='None | Normal | Optimized | QAT')
+parser.add_argument('--q_localnet_scales', type=str, default="Per-tensor", help='Per-tensor | Per-channel')
+
 # others
 parser.add_argument('--logdir',
                     type=str,
@@ -76,7 +88,7 @@ parser.add_argument('--description',
 args = parser.parse_args()
 
 
-def inference():
+def inference(anchornet, localnet, check_point, reduced_mode = -1):
     sceneIds = list(range(args.scene_l, args.scene_r))
     # Create Dataset and Dataloader
     test_dataset = GraspnetPointDataset(args.all_points_num,
@@ -102,21 +114,6 @@ def inference():
     test_data.dataset.unaug()
     test_data.dataset.eval()
 
-    # Init the model
-    input_channels = 4
-    anchornet = AnchorGraspNet(in_dim=input_channels,
-                               ratio=args.ratio,
-                               anchor_k=args.anchor_k)
-    localnet = PointMultiGraspNet(info_size=3, k_cls=args.anchor_num**2)
-
-    # multi gpu
-    anchornet = anchornet.cuda()
-    localnet = localnet.cuda()
-
-    # Load checkpoint
-    check_point = torch.load(args.checkpoint_path)
-    anchornet.load_state_dict(check_point['anchor'])
-    localnet.load_state_dict(check_point['local'])
     # load checkpoint
     basic_ranges = torch.linspace(-1, 1, args.anchor_num + 1).cuda()
     basic_anchors = (basic_ranges[1:] + basic_ranges[:-1]) / 2
@@ -126,36 +123,23 @@ def inference():
     logging.info('Using saved anchors')
     print('-> loaded checkpoint %s ' % (args.checkpoint_path))
 
-    print('total checkpoint size ', asizeof.asizeof(check_point)/1000, "kB")
-    print('optimizer size ', asizeof.asizeof(check_point['optimizer'])/1000, "kB")
-    print('anchornet size ', asizeof.asizeof(check_point['anchor'])/1000, "kB")
-    print('localnet size ', asizeof.asizeof(check_point['local'])/1000, "kB")
-    print('anchors\' gamma size ', asizeof.asizeof(check_point['gamma'])/1000, "kB")
-    print('anchors\' beta size ', asizeof.asizeof(check_point['beta'])/1000, "kB")
-
-    model_parameters = filter(lambda p: p.requires_grad, anchornet.parameters())
-    params = sum([np.prod(p.size()) for p in model_parameters])
-    print("AnchorNet parameter count: ", params)
-
-    model_parameters = filter(lambda p: p.requires_grad, localnet.parameters())
-    params = sum([np.prod(p.size()) for p in model_parameters])
-    print("LocalNet parameter count: ", params)
-
-    # network eval mode
-    anchornet.eval()
-    localnet.eval()
     # stop rot and zoom for validation
     test_dataset.eval()
 
-    time_2d, time_data, time_6d, time_colli, time_nms, localnet_time, anchornet_time = 0, 0, 0, 0, 0, 0, 0
+    time_2d, time_data, time_6d, time_colli, time_nms = 0, 0, 0, 0, 0
+    anchornet_times = []
+    localnet_times = []
+    total_times = []
 
     batch_idx = -1
     vis_id = []
     with torch.no_grad():
         for anchor_data, rgb, ori_depth, grasppaths in test_data:
-            #if batch_idx >= 256:
-            #    break
+            if reduced_mode != -1 and batch_idx >= reduced_mode:
+                break
             batch_idx += 1
+
+            bigtimer = time()
 
             # medfilt first
             depth = ori_depth.numpy().squeeze()
@@ -180,11 +164,19 @@ def inference():
             x, _, _, _, _ = anchor_data
             x = x.cuda(non_blocking=True)
 
+            
+            if True:#next(anchornet.parameters()).is_cpu:
+                x = x.cpu()
+
             start2 = time()
-            pred_2d, perpoint_features = anchornet(x)
+            anchornet_output = anchornet(x)
 
             if batch_idx >= 1:
-                anchornet_time += time() - start2
+                anchornet_times.append((time() - start2) * 1000)
+
+            if True:#next(anchornet.parameters()).is_cpu:
+                pred_2d = (anchornet_output[0].cuda(), anchornet_output[1].cuda(), anchornet_output[2].cuda(), anchornet_output[3].cuda(), anchornet_output[4].cuda())
+                perpoint_features = anchornet_output[5].cuda()
 
             loc_map, cls_mask, theta_offset, height_offset, width_offset = \
                 anchor_output_process(*pred_2d, sigma=args.sigma)
@@ -226,6 +218,8 @@ def inference():
 
             # feature fusion
             points_all = feature_fusion(points, perpoint_features, xyzs)
+
+
             rect_ggs = [rect_gg]
             pc_group, valid_local_centers = data_process(
                 points_all,
@@ -237,6 +231,7 @@ def inference():
                 is_training=False)
             rect_gg = rect_ggs[0]
             # batch_size == 1 when valid
+
             points_all = points_all.squeeze()
 
             # get 2d grasp info (not grasp itself) for trainning
@@ -244,22 +239,29 @@ def inference():
             g_thetas = rect_gg.thetas[None]
             g_ws = rect_gg.widths[None]
             g_ds = rect_gg.depths[None]
+
             cur_info = np.vstack([g_thetas, g_ws, g_ds])
             grasp_info = np.vstack([grasp_info, cur_info.T])
             grasp_info = torch.from_numpy(grasp_info).to(dtype=torch.float32,
                                                          device='cuda')
-
             # get data time
             if batch_idx >= 1:
                 torch.cuda.synchronize()
                 time_data += time() - start
             start = time()
 
+            if True:
+                pc_group = pc_group.cpu()
+                grasp_info = grasp_info.cpu()
+
             # get gamma and beta classification result
-            _, pred, offset = localnet(pc_group, grasp_info)
+            localnet_output = localnet([pc_group, grasp_info])
 
             if batch_idx >= 1:
-                localnet_time += time() - start
+                localnet_times.append((time() - start) * 1000)
+            
+            pred = localnet_output[1].cuda()
+            offset = localnet_output[2].cuda()
 
             # detect 6d grasp from 2d output and 6d output
             pred_grasp, pred_rect_gg = detect_6d_grasp_multi(
@@ -304,6 +306,7 @@ def inference():
             if batch_idx >= 1:
                 torch.cuda.synchronize()
                 time_nms += time() - start
+                total_times.append((time() - bigtimer) * 1000)
 
             pred_gg = HGGDGraspGroup(translations=gg.translations,
                                      rotations=gg.rotation_matrices,
@@ -343,18 +346,27 @@ def inference():
     time_6d = time_6d / batch_idx * 1000
     time_colli = time_colli / batch_idx * 1000
     time_nms = time_nms / batch_idx * 1000
-    anchornet_time = anchornet_time / batch_idx * 1000
-    anchornet_time = localnet_time / batch_idx * 1000
+
+    total_times = np.array(total_times)
+    anchornet_times = np.array(anchornet_times)
+    localnet_times = np.array(localnet_times)
+
     logging.info('Time stats:')
     logging.info(
-        f'Total: {time_2d + time_data + time_6d + time_colli + time_nms:.3f} ms'
+        f'Total: {np.average(total_times):.3f} ms (std: {np.std(total_times):.3f}, n: {len(total_times)})'
     )
     logging.info(
-        f'2d: {time_2d:.3f} ms (anchornet: {anchornet_time:.3f} ms)  data: {time_data:.3f} ms  6d: {time_6d:.3f} ms (localnet: {localnet_time:.3f} ms) colli: {time_colli:.3f} ms  nms: {time_nms:.3f} ms'
+        f'AnchorNet: {np.average(anchornet_times):.3f} ms (std: {np.std(anchornet_times):.3f}, n: {len(anchornet_times)})'
+    )
+    logging.info(
+        f'LocalNet: {np.average(localnet_times):.3f} ms (std: {np.std(localnet_times):.3f}, n: {len(localnet_times)})'
+    )
+    logging.info(
+        f'2d: {time_2d:.3f} ms data: {time_data:.3f} ms  6d: {time_6d:.3f}ms colli: {time_colli:.3f} ms  nms: {time_nms:.3f} ms'
     )
 
 
-def evaluate():
+def evaluate(reduced_mode = -1):
     # res = np.load('temp_result.npy')
     ge = GraspNetEval(root=args.scene_path,
                       camera=camera,
@@ -362,7 +374,8 @@ def evaluate():
     res, ap, colli = ge.eval_scene_lr(args.dump_dir,
                                       args.scene_l,
                                       args.scene_r,
-                                      proc=args.num_workers)
+                                      proc=args.num_workers,
+                                      reduced_mode=reduced_mode)
     np.save('temp_result.npy', res)
     # get ap 0.8 and ap 0.4
     aps = res.mean(0).mean(0).mean(0)
@@ -421,6 +434,20 @@ if __name__ == '__main__':
     console.setFormatter(formatter)
     # add the handler to the root logger
     logging.getLogger('').addHandler(console)
+    
+    # Load checkpoint
+    check_point = torch.load(args.checkpoint_path)
 
-    inference()
-    evaluate()
+    reduced_mode = -1
+    anchornet, localnet = load_models(check_point, args)
+    anchornet = anchornet.cpu()
+    localnet = localnet.cpu()
+
+    print(anchornet)
+    print(localnet)
+
+    # print("Using the AnchorNet sub-divider!")
+    # anchornet = DividedAnchorNet(anchornet)
+
+    inference(anchornet, localnet, check_point, reduced_mode=reduced_mode)
+    evaluate(reduced_mode=reduced_mode)

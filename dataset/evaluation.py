@@ -6,7 +6,7 @@ import torch
 from numba import njit
 from torchvision.transforms.functional import gaussian_blur
 
-#from dataset.collision_detector import ModelFreeCollisionDetector
+from ..dataset.collision_detector import ModelFreeCollisionDetector
 
 from .config import get_camera_intrinsic
 from .grasp import RectGrasp, RectGraspGroup

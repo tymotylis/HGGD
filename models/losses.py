@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from numba import njit
 from numba.typed import List as typed_List
 
-from dataset.utils import angle_distance, rotation_distance
+from ..dataset.utils import angle_distance, rotation_distance
 
 eps = 1e-6
 
@@ -111,7 +111,8 @@ def compute_multicls_loss(pred,
 
     # use jit function to speed up
     # prepare input
-    thetas = grasp_info[:, 0].cpu().numpy().astype(np.float64)
+    grasp_info = grasp_info.cpu()
+    thetas = grasp_info[:, 0].numpy().astype(np.float64)
     label_offsets = typed_List(
         [g[:, :3].cpu().numpy().astype(np.float64) for g in gg_labels])
     label_eulers = typed_List(

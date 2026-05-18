@@ -42,19 +42,58 @@ class PointMultiGraspNet(nn.Module):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
-    def forward(self, points, info):
+        self.quant_stubs = None 
+        self.dequant_stubs = None 
+
+    def add_quant_stubs(self):
+        self.pointnet.add_quant_stubs()
+
+        self.info_layer = nn.Sequential(torch.quantization.DeQuantStub(), self.info_layer, torch.quantization.QuantStub())
+        self.info_layer[1].qconfig = None
+
+        self.anchor_mlp = nn.Sequential(torch.quantization.DeQuantStub(),
+                                        self.anchor_mlp[0],
+                                        torch.quantization.QuantStub(),
+                                        self.anchor_mlp[1],
+                                        self.anchor_mlp[2],
+                                        torch.quantization.DeQuantStub(),
+                                        self.anchor_mlp[3],
+                                        torch.quantization.QuantStub())
+        self.anchor_mlp[1].qconfig = None
+        self.anchor_mlp[6].qconfig = None
+
+        # self.offset_mlp = nn.Sequential(torch.quantization.DeQuantStub(),
+        #                                 self.offset_mlp[0],
+        #                                 torch.quantization.QuantStub(),
+        #                                 self.offset_mlp[1],
+        #                                 self.offset_mlp[2],
+        #                                 self.offset_mlp[3])
+        # self.offset_mlp[1].qconfig = None
+        
+        
+
+    def forward(self, input):
+        points = input[0]
+        info = input[1]
+
         points = points.transpose(1, 2)
         # pointnet
         # Used to extract features from the pointcloud 
         features = self.pointnet(points)
+
         # mlp
         # info - the features extracted from the RGBD image
         point_features = self.point_layer(features)
+
         info_features = self.info_layer(info)
         x = torch.cat([point_features, info_features], 1)
+
         # get anchors and offset
         # Anchors - a multi-label classification gives you the indexes of selected anchors
         # Offset - the 3D center offset of the anchor
         pred = self.anchor_mlp(x)
         offset = self.offset_mlp(x).view(-1, self.k_cls, 3)
-        return features, pred, offset
+
+        # input[0] = points
+        # input[1] = info
+        return [features, pred, offset]

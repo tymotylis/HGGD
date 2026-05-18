@@ -22,6 +22,7 @@ class BasicBlock(nn.Module):
 
     def __init__(self, in_channels, out_channels, stride=1):
         super().__init__()
+        self.add = nn.quantized.FloatFunctional()
 
         #residual function
         self.residual_function = nn.Sequential(
@@ -31,7 +32,7 @@ class BasicBlock(nn.Module):
                       stride=stride,
                       padding=1,
                       bias=False), nn.BatchNorm2d(out_channels),
-            nn.LeakyReLU(inplace=True),
+            nn.LeakyReLU(inplace=False),
             nn.Conv2d(out_channels,
                       out_channels * BasicBlock.expansion,
                       kernel_size=3,
@@ -54,8 +55,7 @@ class BasicBlock(nn.Module):
                 nn.BatchNorm2d(out_channels * BasicBlock.expansion))
 
     def forward(self, x):
-        return nn.LeakyReLU(inplace=True)(self.residual_function(x) +
-                                          self.shortcut(x))
+        return nn.LeakyReLU(inplace=False)(self.add.add(self.residual_function(x), self.shortcut(x)))
 
 
 class BottleNeck(nn.Module):
@@ -67,7 +67,7 @@ class BottleNeck(nn.Module):
         self.residual_function = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
             nn.BatchNorm2d(out_channels),
-            nn.LeakyReLU(inplace=True),
+            nn.LeakyReLU(inplace=False),
             nn.Conv2d(out_channels,
                       out_channels,
                       stride=stride,
@@ -75,7 +75,7 @@ class BottleNeck(nn.Module):
                       padding=1,
                       bias=False),
             nn.BatchNorm2d(out_channels),
-            nn.LeakyReLU(inplace=True),
+            nn.LeakyReLU(inplace=False),
             nn.Conv2d(out_channels,
                       out_channels * BottleNeck.expansion,
                       kernel_size=1,
@@ -95,7 +95,7 @@ class BottleNeck(nn.Module):
                 nn.BatchNorm2d(out_channels * BottleNeck.expansion))
 
     def forward(self, x):
-        return nn.LeakyReLU(inplace=True)(self.residual_function(x) +
+        return nn.LeakyReLU(inplace=False)(self.residual_function(x) +
                                           self.shortcut(x))
 
 
@@ -113,7 +113,7 @@ class ResNet(nn.Module):
                       stride=2,
                       padding=3,
                       bias=False), nn.BatchNorm2d(self.in_channels),
-            nn.LeakyReLU(inplace=True))
+            nn.LeakyReLU(inplace=False))
         self.conv2_x = self._make_layer(block, planes * 2, num_blocks[0], 2)
         self.conv3_x = self._make_layer(block, planes * 4, num_blocks[1], 2)
         self.conv4_x = self._make_layer(block, planes * 8, num_blocks[2], 2)

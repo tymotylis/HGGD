@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from time import time
 
 from .resnet_model import BasicBlock, BottleNeck, ResNet
 
@@ -145,6 +146,7 @@ class AnchorGraspNet(nn.Module):
                  mid_dim=32,
                  use_upsampling=False):
         super(AnchorGraspNet, self).__init__()
+        self.add = nn.quantized.FloatFunctional()
 
         # Using imagenet pre-trained model as feature extractor
         self.ratio = ratio
@@ -169,7 +171,7 @@ class AnchorGraspNet(nn.Module):
                 else:
                     self.trconv.append(upsampleconvolution(cur_dim, dim))
             else:
-                if i < min(5 - np.log2(ratio), 2):
+                if i < min(5 - np.log2(ratio), 2): # i > 0 and i < 3:
                     self.trconv.append(
                         trconvolution(cur_dim,
                                       dim,
@@ -224,16 +226,30 @@ class AnchorGraspNet(nn.Module):
         x = xs[-1]
         for i, layer in enumerate(self.trconv):
             # skip connection
-            x = layer(x + xs[self.depth - i])
+
+            layer.deconv[0].padding = (1, 1)
+            layer.deconv[0].output_padding = (0, 0)
+            if self.depth - i - 1 >= 0:
+                if xs[self.depth - i - 1].shape[2] != x.shape[2] * 2:
+                    layer.deconv[0].padding = (2, layer.deconv[0].padding[1])
+                    layer.deconv[0].output_padding = (1, layer.deconv[0].output_padding[1])
+                if xs[self.depth - i - 1].shape[3] != x.shape[3] * 2:
+                    layer.deconv[0].padding = (layer.deconv[0].padding[0], 2)
+                    layer.deconv[0].output_padding = (layer.deconv[0].output_padding[0], 1)
+
+            #x = xs[self.depth - i]
+            x = layer(self.add.add(x, xs[self.depth - i]))
+
             # down sample classification mask
-            if x.shape[2] == 80:
+            if i == 1: #x.shape[2] == 80:
                 features = x.detach()
             if int(np.log2(self.ratio)) == self.depth - i:
                 cls_mask = self.cls_mask_conv(x)
                 theta_offset = self.theta_offset_conv(x)
                 width_offset = self.width_offset_conv(x)
                 depth_offset = self.depth_offset_conv(x)
+
         # full scale location map
         loc_map = self.hmap(x)
-        return (loc_map, cls_mask, theta_offset, depth_offset,
-                width_offset), features
+
+        return [loc_map, cls_mask, theta_offset, depth_offset, width_offset, features]

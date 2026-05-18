@@ -280,7 +280,9 @@ def inference(ori_rgb,
 
         # localnet
         localnet_start_time = time()
-        _, pred, offset = localnet(pc_group, grasp_info)
+        localnet_output = localnet([pc_group, grasp_info])
+        pred = localnet_output[1]
+        offset = localnet_output[2]
 
         # detect 6d grasp from 2d output and 6d output
         postprocess_start_time = time()
@@ -371,6 +373,7 @@ def setup_inference(use_cuda):
         check_point = torch.load(args.checkpoint_path, map_location=torch.device("cpu"))
 
     anchornet.load_state_dict(check_point['anchor'])
+    check_point['local'] = remap_checkpoint(check_point['local'])
     localnet.load_state_dict(check_point['local'])
     # load checkpoint
     basic_ranges = torch.linspace(-1, 1, args.anchor_num + 1)
