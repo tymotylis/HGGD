@@ -201,14 +201,8 @@ def load_qconfig(model, q_type, q_scales):
         else:
             raise ValueError('Error! Incorrect anchornet quantization type argument!')
     elif isinstance(model, PointMultiGraspNet):
-        if q_scales == "Per-tensor":
-            activation_scheme = torch.per_tensor_affine
-            weight_scheme = torch.per_tensor_symmetric
-        elif q_scales == "Per-channel":
-            activation_scheme = torch.per_channel_affine
-            weight_scheme = torch.per_channel_symmetric
-        else:
-            raise ValueError('Error! Localnet quantization scales argument is incorrect!')
+        activation_scheme = torch.per_tensor_affine
+        weight_scheme = torch.per_tensor_symmetric
 
         if q_type == "Normal" or q_type == "Optimized":
             return torch.ao.quantization.QConfig(
@@ -336,7 +330,7 @@ def load_models(check_point, args):
     anchornet.load_state_dict(check_point['anchor'])
 
     if args.q_localnet_type == "Normal" or args.q_localnet_type == "Optimized" or args.q_localnet_type == "QAT":
-        localnet = prepare_model(localnet, args.q_localnet_type, args.q_localnet_scales)
+        localnet = prepare_model(localnet, args.q_localnet_type, None)
         localnet = convert_model(localnet)
     elif args.q_localnet_type != "None":
         raise ValueError('Error! Incorrect localnet quantization type argument!')
@@ -386,13 +380,17 @@ def Q_callibration_and_training(anchornet :nn.Module, localnet :nn.Module, val_d
     if args.q_localnet_type == 'None':
         localnet_quant = localnet
     else:
-        localnet_quant = prepare_model(localnet, args.q_localnet_type, args.q_localnet_scales)    
+        localnet_quant = prepare_model(localnet, args.q_localnet_type, None)    
 
     # Callibrate the quantization by feeding it a bunch of real-world data
-    if args.q_anchornet_type != "QAT" and args.q_localnet_type != "QAT":
+    if (args.q_anchornet_type == "8-bit" or 
+        args.q_anchornet_type == "4-bit" or 
+        args.q_localnet_type == "Normal" or 
+        args.q_localnet_type == "Optimized"):
         print("Calibrating...")
         validate(args.epochs, anchornet_quant, localnet_quant, load_callibration_data(args), anchors, args, end_early=args.callibration_samples)
-    else:
+    elif (args.q_anchornet_type == "QAT" or 
+        args.q_localnet_type == "QAT"):
         print("QAT training...")
         args.lr /= 100
         training_loop(args, anchornet_quant, localnet_quant, args.epochs, args.epochs + args.qat_epochs, anchors)

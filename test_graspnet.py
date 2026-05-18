@@ -72,7 +72,7 @@ parser.add_argument('--q_anchornet_type', type=str, default="None", help='None |
 parser.add_argument('--q_anchornet_scales', type=str, default="Affine", help='Symmetric | Affine')
 
 parser.add_argument('--q_localnet_type', type=str, default="None", help='None | Normal | Optimized | QAT')
-parser.add_argument('--q_localnet_scales', type=str, default="Per-tensor", help='Per-tensor | Per-channel')
+# parser.add_argument('--q_localnet_scales', type=str, default="Per-tensor", help='Per-tensor | Per-channel')
 
 # others
 parser.add_argument('--logdir',

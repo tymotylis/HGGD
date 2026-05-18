@@ -217,7 +217,7 @@ def parse_args():
     parser.add_argument('--q_anchornet_scales', type=str, default="Affine", help='Symmetric | Affine')
 
     parser.add_argument('--q_localnet_type', type=str, default="None", help='None | Normal | Optimized | QAT')
-    parser.add_argument('--q_localnet_scales', type=str, default="Per-tensor", help='Per-tensor | Per-channel')
+    # parser.add_argument('--q_localnet_scales', type=str, default="Per-tensor", help='Per-tensor | Per-channel')
 
     parser.add_argument('--qat_epochs', type=int, default=10)
     parser.add_argument('--callibration_samples', type=int, default=256)
@@ -567,7 +567,7 @@ def validate(epoch, anchornet: nn.Module, localnet: nn.Module,
             end_early -= 1
             if end_early == 0:
                 break
-                
+
             batch_idx += 1
             # get scene points
             points, _, _ = val_data.dataset.helper.to_scene_points(
