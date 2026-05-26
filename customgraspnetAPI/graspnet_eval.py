@@ -308,6 +308,11 @@ class GraspNetEval(GraspNet):
             cur_list = res.get()
             scene_acc_list.append(cur_list[0])
             scene_colli_list.append(cur_list[-1])
+
+            accuracy_array = []
+            for i in cur_list[0]:
+                accuracy_array.append(np.mean(i[:, :]))
+            print("accuracy array", accuracy_array)
         return scene_acc_list, scene_colli_list
 
     def eval_scene_lr(self, dump_folder, l, r, proc=2, reduced_mode = -1):

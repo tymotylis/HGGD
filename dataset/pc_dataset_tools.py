@@ -31,6 +31,11 @@ def feature_fusion(points, perpoint_features, xyzs, mode='knn'):
     perpoint_features = torch.concat([xyzs, perpoint_features], 1)
     B, C = points.shape[0], perpoint_features.shape[1]
     perpoint_features = perpoint_features.reshape((B, C, -1)).transpose(1, 2)
+
+    # filter -10 (marked as invalid)
+    mask = (perpoint_features[0, :, 3] != -10) 
+    perpoint_features = perpoint_features[:, mask, :]
+
     # knn neigbor selection
     if mode == 'knn':
         _, nn_idxs, _ = knn_points(points[..., :3],

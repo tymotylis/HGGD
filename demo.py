@@ -393,7 +393,7 @@ def setup_inference(use_cuda):
 
 if __name__ == '__main__':
     load_parameters_parser()
-    setup_inference()
+    setup_inference(False)
     # read image and conver to tensor
     ori_depth = np.array(Image.open(args.depth_path))
     ori_rgb = np.array(Image.open(args.rgb_path)) / 255.0

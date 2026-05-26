@@ -28,7 +28,7 @@ from .models.localgraspnet import PointMultiGraspNet
 from .models.losses import compute_anchor_loss, compute_multicls_loss
 from .train_utils import *
 from .edge_optimization.quantization import *
-from .edge_optimization.down_sampling import *
+from .edge_optimization.tiling import *
 
 dis_criterion = 0.05
 rot_criterion = 0.25

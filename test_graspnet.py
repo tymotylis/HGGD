@@ -26,9 +26,7 @@ from .models.localgraspnet import PointMultiGraspNet
 from .train_utils import *
 
 from .edge_optimization.quantization import *
-#from .edge_optimization.down_sampling import *
-
-#from .edge_optimization.quantization import *
+from .edge_optimization.tiling import *
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--checkpoint-path', default=None)
@@ -73,6 +71,10 @@ parser.add_argument('--q_anchornet_scales', type=str, default="Affine", help='Sy
 
 parser.add_argument('--q_localnet_type', type=str, default="None", help='None | Normal | Optimized | QAT')
 # parser.add_argument('--q_localnet_scales', type=str, default="Per-tensor", help='Per-tensor | Per-channel')
+
+# tiling
+parser.add_argument('--tiling', type=bool, default=False)
+
 
 # others
 parser.add_argument('--logdir',
@@ -169,7 +171,11 @@ def inference(anchornet, localnet, check_point, reduced_mode = -1):
                 x = x.cpu()
 
             start2 = time()
-            anchornet_output = anchornet(x)
+
+            if isinstance(anchornet, DividedAnchorNet):
+                anchornet_output = anchornet(x, ori_depth)
+            else:
+                anchornet_output = anchornet(x)
 
             if batch_idx >= 1:
                 anchornet_times.append((time() - start2) * 1000)
@@ -178,10 +184,12 @@ def inference(anchornet, localnet, check_point, reduced_mode = -1):
                 pred_2d = (anchornet_output[0].cuda(), anchornet_output[1].cuda(), anchornet_output[2].cuda(), anchornet_output[3].cuda(), anchornet_output[4].cuda())
                 perpoint_features = anchornet_output[5].cuda()
 
+            # Normalize the anchornet output maps 
             loc_map, cls_mask, theta_offset, height_offset, width_offset = \
                 anchor_output_process(*pred_2d, sigma=args.sigma)
 
             # detect 2d grasp (x, y, theta)
+            # Self explanatory
             rect_gg = detect_2d_grasp(loc_map,
                                       cls_mask,
                                       theta_offset,
@@ -217,10 +225,15 @@ def inference(anchornet, localnet, check_point, reduced_mode = -1):
             start = time()
 
             # feature fusion
+            # Each point in the pointcloud gets features from 8 pixels the closest to it
+            # Point count == args.all_points_num (25600)
+            # Pixel count = 80 * 45 (matches the size of the perpoint_features in the anchornet)
             points_all = feature_fusion(points, perpoint_features, xyzs)
 
 
             rect_ggs = [rect_gg]
+            # Groups each center with all the points inside a ball query of width equal to the grasp width
+            # Points are down/upsampled if the count doesn't match the size needed for the neural network
             pc_group, valid_local_centers = data_process(
                 points_all,
                 depth.cuda(),
@@ -255,6 +268,8 @@ def inference(anchornet, localnet, check_point, reduced_mode = -1):
                 grasp_info = grasp_info.cpu()
 
             # get gamma and beta classification result
+            # grasp_info - theta, width, depth of each grasp
+            # pc_group - groups of points (one group for each grasp)
             localnet_output = localnet([pc_group, grasp_info])
 
             if batch_idx >= 1:
@@ -438,16 +453,16 @@ if __name__ == '__main__':
     # Load checkpoint
     check_point = torch.load(args.checkpoint_path)
 
-    reduced_mode = -1
+    reduced_mode = 100
     anchornet, localnet = load_models(check_point, args)
     anchornet = anchornet.cpu()
     localnet = localnet.cpu()
 
-    print(anchornet)
-    print(localnet)
-
-    # print("Using the AnchorNet sub-divider!")
-    # anchornet = DividedAnchorNet(anchornet)
+    if args.tiling:
+        print("Using the AnchorNet sub-divider!")
+        #test_clutter_metric(args)
+        #test_clipping(args)
+        anchornet = DividedAnchorNet(anchornet)
 
     inference(anchornet, localnet, check_point, reduced_mode=reduced_mode)
     evaluate(reduced_mode=reduced_mode)
