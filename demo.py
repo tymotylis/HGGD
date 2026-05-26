@@ -21,7 +21,7 @@ from .models.localgraspnet import PointMultiGraspNet
 from .edge_optimization.quantization import *
 import logging
 
-# from .edge_optimization.tiling import *
+from .edge_optimization.tiling import *
 
 
 #d
@@ -64,6 +64,8 @@ parser.add_argument('--q_anchornet_type', type=str, default="None", help='None |
 parser.add_argument('--q_anchornet_scales', type=str, default="Affine", help='Symmetric | Affine')
 
 parser.add_argument('--q_localnet_type', type=str, default="None", help='None | Normal | Optimized | QAT')
+
+parser.add_argument('--tiling', type=str, default="None", help='None | Full-test')
 
 args = parser.parse_args()
 
@@ -220,8 +222,11 @@ def inference(ori_rgb,
 
         # 2d prediction
         anchornet_start_time = time()
-        anchornet_output = anchornet(x)
 
+        if isinstance(anchornet, DividedAnchorNet):
+            anchornet_output = anchornet(x, ori_depth)
+        else:
+            anchornet_output = anchornet(x)
         process_start_time=time()
 
         pred_2d = (anchornet_output[0], anchornet_output[1], anchornet_output[2], anchornet_output[3], anchornet_output[4])
@@ -381,7 +386,8 @@ def setup_inference(use_cuda):
         print("CUDA disabled")
 
     # random seed
-    random.seed(args.random_seed)
+    random.seed(time())
+    #random.seed(args.random_seed)
     np.random.seed(args.random_seed)
     torch.manual_seed(args.random_seed)
 
@@ -428,8 +434,55 @@ def setup_inference(use_cuda):
     anchornet.eval()
     localnet.eval()
 
+def test_tiling(ori_rgb, ori_depth, use_cuda):
+    global anchornet, localnet
+
+    anchornet_copy = copy.deepcopy(anchornet)
+
+    scores = []
+
+    for k in range(1):
+
+        # scene = 150#randrange(190)
+        # view = 94#randrange(256)
+
+        # print("Picked scene", scene, "view", view)
+
+        # ori_depth = np.array(Image.open(f"/mnt/d/GraspNet/scenes/scene_{scene:04d}/realsense/depth/{view:04d}.png"))
+        # ori_rgb = np.array(Image.open(f"/mnt/d/GraspNet/scenes/scene_{scene:04d}/realsense/rgb/{view:04d}.png")) / 255.0
+
+        tile_sizes = [[1, 1], [2, 1], [3, 2], [4, 2], [5, 3], [6, 3], [7, 4], [8, 5], [9, 5], [10, 6], [11, 6], [12, 7]]
+        score = 0
+
+        for tile_size in tile_sizes:
+            print("Testing partition", tile_size)
+            anchornet = DividedAnchorNet(copy.deepcopy(anchornet_copy), tile_size)
+
+            for i in range(10):
+                inference(ori_rgb,
+                    ori_depth,
+                    vis_heatmap=False,
+                    vis_grasp=False, 
+                    output_times=False,
+                    use_cuda=use_cuda,
+                    log_times=False)
+            
+            if tile_size == [1, 1]:
+                score += np.average(np.array(anchornet.times))
+            else:
+                score -= np.average(np.array(anchornet.times))
+            print("tiling time avg.", np.average(np.array(anchornet.times)), "original avg.", np.average(np.array(anchornet.times_original)))
+        
+        print("score", score)
+        scores.append([score, scene, view])
+        scores.sort(key=lambda x: x[0], reverse=True)
+        print(scores[:10])
+
+    
+
 if __name__ == '__main__':
     # load_parameters_parser()
+
     setup_inference(False)
     # read image and conver to tensor
     ori_depth = np.array(Image.open(args.depth_path))
@@ -442,6 +495,12 @@ if __name__ == '__main__':
                         vis_grasp=False, 
                         output_times=True,
                         use_cuda=use_cuda)
+
+
+    if args.tiling == "Full-test":
+        test_tiling(ori_rgb, ori_depth, use_cuda)
+        sys.exit()
+
     # time test
     start = time()
     T = 100

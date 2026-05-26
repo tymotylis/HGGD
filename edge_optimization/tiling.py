@@ -7,7 +7,7 @@ import numpy
 from time import time
 from torch.ao.quantization.observer import MinMaxObserver 
 from torch.ao.quantization.qconfig import QConfig
-from ..dataset.graspnet_dataset import GraspnetPointDataset
+# from ..dataset.graspnet_dataset import GraspnetPointDataset
 from random import randrange
 from torch.utils.data import DataLoader
 from PIL import Image
@@ -20,18 +20,21 @@ from .background_clipping import *
 from .subdivided_cell import *
 from .clutter_metric import *
 
-from ..train_utils import *
+# from ..train_utils import *
 
 class DividedAnchorNet(nn.Module):
-    def __init__(self, anchornet):
+    def __init__(self, anchornet, partition):
         super().__init__()
 
+        self.partition = np.array(partition)
         self.anchornet = anchornet
         if isinstance(anchornet, torch.nn.DataParallel):
             self.anchornet = anchornet.module
 
         self.anchornet = self.anchornet.cpu()
         self.clutter_debug = []
+        self.times = []
+        self.times_original = []
     
     def tensor_to_visualization(self, tensor):
         if tensor.shape[1] == 4:
@@ -58,8 +61,7 @@ class DividedAnchorNet(nn.Module):
         plt.tight_layout()
         plt.show()
 
-    times = []
-    times_original = []
+    
 
     def forward(self, x, depth):
         depth = np.array(depth).squeeze().T
@@ -73,9 +75,9 @@ class DividedAnchorNet(nn.Module):
         #target_size = 100
         original_shape = np.array([x.shape[2], x.shape[3]])
 
-        partition = np.array([1, 1])# np.array([8, 4])# np.rint(original_shape / target_size) 
+        #partition = np.array([1, 1])# np.array([8, 4])# np.rint(original_shape / target_size) 
         padding = np.array([20, 20]) 
-        partitions_shape = np.ceil(original_shape / partition)
+        partitions_shape = np.ceil(original_shape / self.partition)
 
         # self.visualize_tensor(depth_img)
 
@@ -84,12 +86,11 @@ class DividedAnchorNet(nn.Module):
         foreground_mask = bgClipper.foreground_mask
 
         # self.visualize_tensor(foreground_mask)
+        cells = subdivide(x, self.partition, partitions_shape, padding, foreground_mask)
 
-        cells = subdivide(x, partition, partitions_shape, padding, foreground_mask)
-
-        clutter_metrics = get_clutter_metric_in_cells(cells, rgb, bgClipper)
-        self.clutter_debug.append(clutter_metrics[0])
-        print("clutters: ", self.clutter_debug)
+        # clutter_metrics = get_clutter_metric_in_cells(cells, rgb, bgClipper)
+        # self.clutter_debug.append(clutter_metrics[0])
+        # print("clutters: ", self.clutter_debug)
 
         xs = []
 
@@ -114,9 +115,9 @@ class DividedAnchorNet(nn.Module):
 
         self.times.append(end - start)
         self.times_original.append(end_original - start_original)
-        print("tiling time avg.", np.average(np.array(self.times)), "original avg.", np.average(np.array(self.times_original)))
+        # print("tiling time avg.", np.average(np.array(self.times)), "original avg.", np.average(np.array(self.times_original)))
 
-        x_celled = reconstruct(xs, cells, partition, padding)
+        # x_celled = reconstruct(xs, cells, self.partition, padding)
 
         # img_0 = self.tensor_to_visualization(x_original[0])
         # img_1 = self.tensor_to_visualization(x_celled[0])
@@ -128,7 +129,7 @@ class DividedAnchorNet(nn.Module):
         # plt.tight_layout()
         # plt.show()
 
-        return x_celled
+        return x_original
 
 scene_num = 0
 view_num = 0
@@ -184,7 +185,7 @@ def subdivide(image, partition, partitions_size, padding, foreground_mask):
     cells = []
     for cell_x in range(int(partition[0])):
         for cell_y in range(int(partition[1])):
-            cells.append(Cell([cell_x, cell_y], partition, partitions_size, padding, image, foreground_mask, 0.65))
+            cells.append(Cell([cell_x, cell_y], partition, partitions_size, padding, image, foreground_mask, 1))
 
     return cells
 

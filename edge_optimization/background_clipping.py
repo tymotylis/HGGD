@@ -7,7 +7,7 @@ import numpy as np
 from time import time
 from torch.ao.quantization.observer import MinMaxObserver 
 from torch.ao.quantization.qconfig import QConfig
-from ..dataset.graspnet_dataset import GraspnetPointDataset
+# from ..dataset.graspnet_dataset import GraspnetPointDataset
 from random import randrange
 from torch.utils.data import DataLoader
 from PIL import Image
@@ -21,7 +21,7 @@ from random import sample
 from skimage import measure, morphology
 from pathlib import Path
 
-from ..train_utils import *
+# from ..train_utils import *
 
 class BackgroundClipper:
     def __init__(self, 
@@ -226,7 +226,7 @@ class BackgroundClipper:
             points_through_bitmap = (np.abs(point_plane_distances) < self.proximity) & (self.depth_map != 0)
             self.show_imgs([self.depth_map, self.rgb, points_through_bitmap, foreground_mask])
         
-        return np.ones(foreground_mask.shape)
+        # return np.ones(foreground_mask.shape)
 
         return foreground_mask
 

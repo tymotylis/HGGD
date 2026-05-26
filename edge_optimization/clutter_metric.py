@@ -7,7 +7,7 @@ import numpy
 from time import time
 from torch.ao.quantization.observer import MinMaxObserver 
 from torch.ao.quantization.qconfig import QConfig
-from ..dataset.graspnet_dataset import GraspnetPointDataset
+# from ..dataset.graspnet_dataset import GraspnetPointDataset
 from random import randrange
 from torch.utils.data import DataLoader
 from PIL import Image
@@ -20,7 +20,7 @@ from .background_clipping import *
 from .subdivided_cell import *
 from scipy.ndimage import convolve
 
-from ..train_utils import *
+# from ..train_utils import *
 
 def fill_zeros(img):
     kernel_size = 15
