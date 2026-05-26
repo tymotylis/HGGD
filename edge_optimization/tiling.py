@@ -76,7 +76,7 @@ class DividedAnchorNet(nn.Module):
         original_shape = np.array([x.shape[2], x.shape[3]])
 
         #partition = np.array([1, 1])# np.array([8, 4])# np.rint(original_shape / target_size) 
-        padding = np.array([20, 20]) 
+        padding = np.array([0, 0]) 
         partitions_shape = np.ceil(original_shape / self.partition)
 
         # self.visualize_tensor(depth_img)
