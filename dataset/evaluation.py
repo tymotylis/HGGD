@@ -6,8 +6,6 @@ import torch
 from numba import njit
 from torchvision.transforms.functional import gaussian_blur
 
-from ..dataset.collision_detector import ModelFreeCollisionDetector
-
 from .config import get_camera_intrinsic
 from .grasp import RectGrasp, RectGraspGroup
 from .pc_dataset_tools import select_2d_center
@@ -340,12 +338,3 @@ def calculate_iou_match(gs, gt_bbs, thre=0.25):
             if g.iou(gt) > thre:
                 return True
     return False
-
-
-def collision_detect(points_all: torch.Tensor, pred_gg, mode='regnet'):
-    # collison detect
-    cloud = points_all[:, :3].clone()
-    mfcdetector = ModelFreeCollisionDetector(cloud, voxel_size=0.01, mode=mode)
-    no_collision_mask = mfcdetector.detect(pred_gg, approach_dist=0.05)
-    collision_free_gg = pred_gg[no_collision_mask]
-    return collision_free_gg, no_collision_mask

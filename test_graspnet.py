@@ -15,8 +15,9 @@ from .customgraspnetAPI import Grasp as GraspNetGrasp
 from .customgraspnetAPI import GraspGroup as GraspNetGraspGroup
 from .customgraspnetAPI import GraspNetEval
 from .dataset.config import camera
-from .dataset.evaluation import (anchor_output_process, collision_detect,
+from .dataset.evaluation import (anchor_output_process,
                                 detect_2d_grasp, detect_6d_grasp_multi)
+from .dataset.evaluation_coll import collision_detect
 from .dataset.grasp import GraspGroup as HGGDGraspGroup
 from .dataset.grasp import RectGraspGroup
 from .dataset.graspnet_dataset import GraspnetPointDataset
@@ -453,7 +454,7 @@ if __name__ == '__main__':
     # Load checkpoint
     check_point = torch.load(args.checkpoint_path)
 
-    reduced_mode = 100
+    reduced_mode = 20
     anchornet, localnet = load_models(check_point, args)
     anchornet = anchornet.cpu()
     localnet = localnet.cpu()
@@ -462,7 +463,7 @@ if __name__ == '__main__':
         print("Using the AnchorNet sub-divider!")
         #test_clutter_metric(args)
         #test_clipping(args)
-        anchornet = DividedAnchorNet(anchornet)
+        # anchornet = DividedAnchorNet(anchornet)
 
     inference(anchornet, localnet, check_point, reduced_mode=reduced_mode)
     evaluate(reduced_mode=reduced_mode)

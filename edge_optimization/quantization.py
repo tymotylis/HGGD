@@ -6,12 +6,18 @@ import numpy
 from time import time
 from torch.ao.quantization.observer import MinMaxObserver 
 from torch.ao.quantization.qconfig import QConfig
-from ..dataset.graspnet_dataset import GraspnetPointDataset
-from ..train_graspnet import training_loop
+
+# These are needed for generating checkpoints
+# from ..dataset.graspnet_dataset import GraspnetPointDataset
+# from ..train_graspnet import training_loop
+# from ..train_utils import *
+
+from ..models.anchornet import AnchorGraspNet
+from ..models.localgraspnet import PointMultiGraspNet
+
 import functools
 
 
-from ..train_utils import *
 
 # class QuantStub(nn.Module):
 #     r"""Quantize stub module, before calibration, this is same as an observer,
@@ -318,8 +324,8 @@ def load_models(check_point, args):
     localnet = PointMultiGraspNet(info_size=3, k_cls=args.anchor_num**2)
 
     # multi gpu
-    anchornet = anchornet.cuda()
-    localnet = localnet.cuda()
+    # anchornet = anchornet.cuda()
+    # localnet = localnet.cuda()
     
     if args.q_anchornet_type == "8-bit" or args.q_anchornet_type == "4-bit" or args.q_anchornet_type == "QAT":
         anchornet = prepare_model(anchornet, args.q_anchornet_type, args.q_anchornet_scales)
@@ -453,7 +459,7 @@ def prepare_model(model :nn.Module, q_type, q_scales):
         raise Exception("Unexpeccted model passed for quantization!")
     
     quant_model.qconfig = qconfig
-    quant_model = quant_model.cuda()
+    # quant_model = quant_model.cuda()
 
     if q_type == "QAT":
         quant_model.train()

@@ -15,8 +15,9 @@ from tqdm import tqdm
 
 from .dataset.evaluation import (anchor_output_process, calculate_6d_match,
                                 calculate_coverage, calculate_iou_match,
-                                collision_detect, detect_2d_grasp,
+                                detect_2d_grasp,
                                 detect_6d_grasp_multi)
+from .dataset.evaluation_coll import collision_detect
 from .dataset.grasp import RectGraspGroup
 from .dataset.graspnet_dataset import GraspnetPointDataset
 from .dataset.pc_dataset_tools import (data_process, feature_fusion,

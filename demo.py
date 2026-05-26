@@ -11,12 +11,17 @@ from matplotlib import pyplot as plt
 from PIL import Image
 
 from .dataset.config import get_camera_intrinsic
-from .dataset.evaluation import (anchor_output_process, collision_detect,
+from .dataset.evaluation import (anchor_output_process,
                                 detect_2d_grasp, detect_6d_grasp_multi)
 from .dataset.pc_dataset_tools import data_process, feature_fusion
 from .models.anchornet import AnchorGraspNet
 from .models.localgraspnet import PointMultiGraspNet
-from .train_utils import *
+# from .train_utils import *
+
+from .edge_optimization.quantization import *
+import logging
+
+# from .edge_optimization.tiling import *
 
 
 #d
@@ -53,6 +58,12 @@ parser.add_argument('--rotation-num', type=int, default=1)
 
 # others
 parser.add_argument('--random-seed', type=int, default=123, help='Random seed')
+
+# quantization
+parser.add_argument('--q_anchornet_type', type=str, default="None", help='None | 8-bit | 4-bit | QAT')
+parser.add_argument('--q_anchornet_scales', type=str, default="Affine", help='Symmetric | Affine')
+
+parser.add_argument('--q_localnet_type', type=str, default="None", help='None | Normal | Optimized | QAT')
 
 args = parser.parse_args()
 
@@ -165,14 +176,19 @@ class PointCloudHelper:
         xyzs = torch.stack([cur_xs, cur_ys, cur_zs], axis=-1)
         return xyzs.permute(0, 3, 1, 2)
 
+anchornet_times = []
+localnet_times = []
 
 def inference(ori_rgb,
               ori_depth,
               vis_heatmap=False,
               vis_grasp=True,
               output_times=False,
-              use_cuda=True):
+              use_cuda=True,
+              log_times=False):
     with torch.no_grad():
+        global anchornet_times
+        global localnet_times
         preprocess_start_time = time()
 
         device = 'cuda' if use_cuda else 'cpu'
@@ -204,9 +220,13 @@ def inference(ori_rgb,
 
         # 2d prediction
         anchornet_start_time = time()
-        pred_2d, perpoint_features = anchornet(x)
+        anchornet_output = anchornet(x)
 
         process_start_time=time()
+
+        pred_2d = (anchornet_output[0], anchornet_output[1], anchornet_output[2], anchornet_output[3], anchornet_output[4])
+        perpoint_features = anchornet_output[5]
+
         loc_map, cls_mask, theta_offset, height_offset, width_offset = \
             anchor_output_process(*pred_2d, sigma=args.sigma)
 
@@ -299,7 +319,7 @@ def inference(ori_rgb,
         #pred_gg, _ = collision_detect(points_all,
         #                              pred_grasp_from_rect,
         #                              mode='graspnet')
-        print("Warning! Collission detection is disabled")
+        # print("Warning! Collission detection is disabled")
 
         # nms
         ##pred_gg = pred_gg.nms()
@@ -317,6 +337,14 @@ def inference(ori_rgb,
             print('post-processing time:', (finished_time - postprocess_start_time) * 1000, " ms")
             print()
 
+        if log_times:
+            anchornet_times.append((process_start_time - anchornet_start_time) * 1000)
+            localnet_times.append((postprocess_start_time - localnet_start_time) * 1000)
+
+            np_anchornet_times = np.array(anchornet_times)
+            np_localnet_times = np.array(localnet_times)
+            print(f'AnchorNet avg: {np.average(np_anchornet_times):.3f} ms (std: {np.std(np_anchornet_times):.3f}, n: {len(np_anchornet_times)})')
+            print(f'LocalNet avg: {np.average(np_localnet_times):.3f} ms (std: {np.std(np_localnet_times):.3f}, n: {len(np_localnet_times)})')
 
         # show grasp
         if vis_grasp:
@@ -372,9 +400,14 @@ def setup_inference(use_cuda):
     else:
         check_point = torch.load(args.checkpoint_path, map_location=torch.device("cpu"))
 
-    anchornet.load_state_dict(check_point['anchor'])
-    check_point['local'] = remap_checkpoint(check_point['local'])
-    localnet.load_state_dict(check_point['local'])
+    # anchornet.load_state_dict(check_point['anchor'])
+    # check_point['local'] = remap_checkpoint(check_point['local'])
+    # localnet.load_state_dict(check_point['local'])
+
+    anchornet, localnet = load_models(check_point, args)
+
+    print(anchornet)
+
     # load checkpoint
     basic_ranges = torch.linspace(-1, 1, args.anchor_num + 1)
     if use_cuda:
@@ -392,12 +425,12 @@ def setup_inference(use_cuda):
     localnet.eval()
 
 if __name__ == '__main__':
-    load_parameters_parser()
+    # load_parameters_parser()
     setup_inference(False)
     # read image and conver to tensor
     ori_depth = np.array(Image.open(args.depth_path))
     ori_rgb = np.array(Image.open(args.rgb_path)) / 255.0
-
+    use_cuda = False
     # inference
     pred_gg = inference(ori_rgb,
                         ori_depth,
@@ -414,7 +447,8 @@ if __name__ == '__main__':
                             vis_heatmap=False,
                             vis_grasp=False, 
                             output_times=False,
-                            use_cuda=use_cuda)
+                            use_cuda=use_cuda,
+                            log_times=True)
         if use_cuda:
             torch.cuda.synchronize()
     print('avg time ==', (time() - start) / T * 1e3, 'ms')
