@@ -300,22 +300,26 @@ def inference(ori_rgb,
 
         # localnet
         localnet_start_time = time()
+
         localnet_output = localnet([pc_group, grasp_info])
-        pred = localnet_output[1]
-        offset = localnet_output[2]
 
-        # detect 6d grasp from 2d output and 6d output
         postprocess_start_time = time()
-        _, pred_rect_gg = detect_6d_grasp_multi(rect_gg,
-                                                pred,
-                                                offset,
-                                                valid_local_centers,
-                                                (args.input_w, args.input_h),
-                                                anchors,
-                                                k=args.local_k)
 
-        # collision detect
-        pred_grasp_from_rect = pred_rect_gg.to_6d_grasp_group(depth=0.02)
+        if not log_times:
+            pred = localnet_output[1]
+            offset = localnet_output[2]
+
+            # detect 6d grasp from 2d output and 6d output
+            _, pred_rect_gg = detect_6d_grasp_multi(rect_gg,
+                                                    pred,
+                                                    offset,
+                                                    valid_local_centers,
+                                                    (args.input_w, args.input_h),
+                                                    anchors,
+                                                    k=args.local_k)
+
+            # collision detect
+            pred_grasp_from_rect = pred_rect_gg.to_6d_grasp_group(depth=0.02)
         #pred_gg, _ = collision_detect(points_all,
         #                              pred_grasp_from_rect,
         #                              mode='graspnet')
@@ -345,6 +349,7 @@ def inference(ori_rgb,
             np_localnet_times = np.array(localnet_times)
             print(f'AnchorNet avg: {np.average(np_anchornet_times):.3f} ms (std: {np.std(np_anchornet_times):.3f}, n: {len(np_anchornet_times)})')
             print(f'LocalNet avg: {np.average(np_localnet_times):.3f} ms (std: {np.std(np_localnet_times):.3f}, n: {len(np_localnet_times)})')
+            return None
 
         # show grasp
         if vis_grasp:
@@ -356,6 +361,7 @@ def inference(ori_rgb,
             vispc.points = o3d.utility.Vector3dVector(points)
             vispc.colors = o3d.utility.Vector3dVector(colors)
             o3d.visualization.draw_geometries([vispc] + grasp_geo)
+            
         return pred_grasp_from_rect #pred_gg
 
 def setup_inference(use_cuda):
@@ -405,8 +411,6 @@ def setup_inference(use_cuda):
     # localnet.load_state_dict(check_point['local'])
 
     anchornet, localnet = load_models(check_point, args)
-
-    print(anchornet)
 
     # load checkpoint
     basic_ranges = torch.linspace(-1, 1, args.anchor_num + 1)
