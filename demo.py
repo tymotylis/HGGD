@@ -187,7 +187,8 @@ def inference(ori_rgb,
               vis_grasp=True,
               output_times=False,
               use_cuda=True,
-              log_times=False):
+              log_times=False,
+              skip_postprocessing=False):
     with torch.no_grad():
         global anchornet_times
         global localnet_times
@@ -310,7 +311,7 @@ def inference(ori_rgb,
 
         postprocess_start_time = time()
 
-        if not log_times:
+        if not skip_postprocessing:
             pred = localnet_output[1]
             offset = localnet_output[2]
 
@@ -354,7 +355,6 @@ def inference(ori_rgb,
             np_localnet_times = np.array(localnet_times)
             print(f'AnchorNet avg: {np.average(np_anchornet_times):.3f} ms (std: {np.std(np_anchornet_times):.3f}, n: {len(np_anchornet_times)})')
             print(f'LocalNet avg: {np.average(np_localnet_times):.3f} ms (std: {np.std(np_localnet_times):.3f}, n: {len(np_localnet_times)})')
-            return None
 
         # show grasp
         if vis_grasp:
@@ -366,7 +366,9 @@ def inference(ori_rgb,
             vispc.points = o3d.utility.Vector3dVector(points)
             vispc.colors = o3d.utility.Vector3dVector(colors)
             o3d.visualization.draw_geometries([vispc] + grasp_geo)
-            
+        
+        if skip_postprocessing:
+            return None
         return pred_grasp_from_rect #pred_gg
 
 def setup_inference(use_cuda):
@@ -465,7 +467,8 @@ def test_tiling(ori_rgb, ori_depth, use_cuda):
                     vis_grasp=False, 
                     output_times=False,
                     use_cuda=use_cuda,
-                    log_times=False)
+                    log_times=False,
+                    skip_postprocessing=True)
             
             if tile_size == [1, 1]:
                 score += np.average(np.array(anchornet.times))
@@ -494,7 +497,8 @@ if __name__ == '__main__':
                         vis_heatmap=False,
                         vis_grasp=False, 
                         output_times=True,
-                        use_cuda=use_cuda)
+                        use_cuda=use_cuda,
+                        skip_postprocessing=True)
 
 
     if args.tiling == "Full-test":
@@ -511,7 +515,8 @@ if __name__ == '__main__':
                             vis_grasp=False, 
                             output_times=False,
                             use_cuda=use_cuda,
-                            log_times=True)
+                            log_times=True,
+                            skip_postprocessing=True)
         if use_cuda:
             torch.cuda.synchronize()
     print('avg time ==', (time() - start) / T * 1e3, 'ms')
