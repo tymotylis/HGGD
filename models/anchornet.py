@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from time import time
 
 from .resnet_model import BasicBlock, BottleNeck, ResNet
+import threading
 
 
 def set_bn_momentum_default(bn_momentum):
@@ -150,7 +151,7 @@ class AnchorGraspNet(nn.Module):
 
         # Using imagenet pre-trained model as feature extractor
         self.ratio = ratio
-        self.trconv = nn.ModuleList()
+        self.trconv = [nn.ModuleList(), nn.ModuleList(), nn.ModuleList(), nn.ModuleList()]
         # backbone
         self.feature_dim = 128
         self.backbone = Backbone(in_dim, self.feature_dim // 16)
@@ -161,25 +162,29 @@ class AnchorGraspNet(nn.Module):
             max(8, self.feature_dim // (2**(i + 1)))
             for i in range(self.depth + 1)
         ]
-        cur_dim = self.feature_dim
         output_sizes = [(40, 23), (80, 45)]
-        for i, dim in enumerate(channels):
-            if use_upsampling:
-                if i < min(5 - np.log2(ratio), 2):
-                    self.trconv.append(
-                        upsampleconvolution(cur_dim, dim, output_sizes[i]))
+
+        for j in range(4):
+            cur_dim = self.feature_dim
+
+            for i, dim in enumerate(channels):
+                if use_upsampling:
+                    if i < min(5 - np.log2(ratio), 2):
+                        self.trconv[j].append(
+                            upsampleconvolution(cur_dim, dim, output_sizes[i]))
+                    else:
+                        self.trconv[j].append(upsampleconvolution(cur_dim, dim))
                 else:
-                    self.trconv.append(upsampleconvolution(cur_dim, dim))
-            else:
-                if i < min(5 - np.log2(ratio), 2): # i > 0 and i < 3:
-                    self.trconv.append(
-                        trconvolution(cur_dim,
-                                      dim,
-                                      padding=(1, 2),
-                                      output_padding=(0, 1)))
-                else:
-                    self.trconv.append(trconvolution(cur_dim, dim))
-            cur_dim = dim
+                    if i < min(5 - np.log2(ratio), 2): # i > 0 and i < 3:
+                        self.trconv[j].append(
+                            trconvolution(cur_dim,
+                                        dim,
+                                        padding=self.get_paddings(j)[0],
+                                        output_padding=self.get_paddings(j)[1]))
+                    else:
+                        self.trconv[j].append(trconvolution(cur_dim, dim, padding=self.get_paddings(j)[0],
+                                        output_padding=self.get_paddings(j)[1]))
+                cur_dim = dim
 
         # Heatmap predictor
         cur_dim = channels[self.depth - int(np.log2(self.ratio))]
@@ -205,6 +210,29 @@ class AnchorGraspNet(nn.Module):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
+        # self.deconv_lock = threading.Lock()
+
+    def get_paddings(self, i):
+        if i == 0:
+            return ((1, 1), (0, 0))
+        elif i == 1:
+            return ((2, 1), (1, 0))
+        elif i == 2:
+            return ((2, 2), (1, 1))
+        elif i == 3:
+            return ((1, 2), (0, 1))
+
+    def get_index(self, paddings):
+        if paddings == ((1, 1), (0, 0)):
+            return 0
+        elif paddings == ((2, 1), (1, 0)):
+            return 1
+        elif paddings == ((2, 2), (1, 1)):
+            return 2
+        elif paddings == ((1, 2), (0, 1)):
+            return 3
+        print("index error", paddings)
+
     def forward(self, x):
         # use backbone to get downscaled features
         # ResNet mode 34 (Meaning it's made of BasicBlock in a [3, 4, 6, 3] configuration)
@@ -224,20 +252,21 @@ class AnchorGraspNet(nn.Module):
         # On the second layer the 3 maps get saved and the features (later used in LocalNet) get saved
             # The heatmaps get further convolution reshaping ...
         x = xs[-1]
-        for i, layer in enumerate(self.trconv):
+        for i, dis in enumerate(self.trconv[0]):
             # skip connection
-
-            layer.deconv[0].padding = (1, 1)
-            layer.deconv[0].output_padding = (0, 0)
+            # with self.deconv_lock:
+            padding = (1, 1)
+            output_padding = (0, 0)
             if self.depth - i - 1 >= 0:
                 if xs[self.depth - i - 1].shape[2] != x.shape[2] * 2:
-                    layer.deconv[0].padding = (2, layer.deconv[0].padding[1])
-                    layer.deconv[0].output_padding = (1, layer.deconv[0].output_padding[1])
+                    padding = (2, padding[1])
+                    output_padding = (1, output_padding[1])
                 if xs[self.depth - i - 1].shape[3] != x.shape[3] * 2:
-                    layer.deconv[0].padding = (layer.deconv[0].padding[0], 2)
-                    layer.deconv[0].output_padding = (layer.deconv[0].output_padding[0], 1)
+                    padding = (padding[0], 2)
+                    output_padding = (output_padding[0], 1)
 
-            #x = xs[self.depth - i]
+            layer = self.trconv[self.get_index((padding, output_padding))][i]
+
             x = layer(self.add.add(x, xs[self.depth - i]))
 
             # down sample classification mask

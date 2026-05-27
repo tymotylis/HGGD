@@ -22,6 +22,8 @@ from .edge_optimization.quantization import *
 import logging
 
 from .edge_optimization.tiling import *
+from concurrent.futures import ThreadPoolExecutor
+
 
 
 #d
@@ -439,8 +441,6 @@ def setup_inference(use_cuda):
 def test_tiling(ori_rgb, ori_depth, use_cuda):
     global anchornet, localnet
 
-    anchornet_copy = copy.deepcopy(anchornet)
-
     scores = []
 
     for k in range(1):
@@ -458,7 +458,7 @@ def test_tiling(ori_rgb, ori_depth, use_cuda):
 
         for tile_size in tile_sizes:
             print("Testing partition", tile_size)
-            anchornet = DividedAnchorNet(copy.deepcopy(anchornet_copy), tile_size)
+            anchornet = DividedAnchorNet(anchornet, tile_size)
 
             for i in range(10):
                 inference(ori_rgb,
@@ -476,6 +476,8 @@ def test_tiling(ori_rgb, ori_depth, use_cuda):
                 score -= np.average(np.array(anchornet.times))
             print("tiling time avg.", np.average(np.array(anchornet.times)), "original avg.", np.average(np.array(anchornet.times_original)))
         
+            anchornet = anchornet.anchornet
+        
         print("score", score)
         scores.append([score, scene, view])
         scores.sort(key=lambda x: x[0], reverse=True)
@@ -486,8 +488,8 @@ def test_tiling(ori_rgb, ori_depth, use_cuda):
 if __name__ == '__main__':
     # load_parameters_parser()
 
-    # torch.set_num_threads(1)      
-    # torch.set_num_interop_threads(1)
+    torch.set_num_threads(1)      
+    torch.set_num_interop_threads(1)
 
     setup_inference(False)
     # read image and conver to tensor

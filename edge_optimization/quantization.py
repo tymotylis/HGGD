@@ -333,7 +333,7 @@ def load_models(check_point, args):
     elif args.q_anchornet_type != "None":
         raise ValueError('Error! Incorrect anchornet quantization type argument!')
 
-    anchornet.load_state_dict(check_point['anchor'])
+    # anchornet.load_state_dict(check_point['anchor'])
 
     if args.q_localnet_type == "Normal" or args.q_localnet_type == "Optimized" or args.q_localnet_type == "QAT":
         localnet = prepare_model(localnet, args.q_localnet_type, None)

@@ -17,6 +17,9 @@ class BoundingBox():
 
     def get_height(self):
         return self.y_max - self.y_min
+    
+    def get_volume(self):
+        return self.get_width() * self.get_height()
 
     def clip_img(self, img):
         return img[self.y_min:self.y_max, self.x_min:self.x_max]
@@ -91,6 +94,9 @@ class Cell():
         self.original_bb = self.get_bb(tile_coords, tile_dimensions)
 
         self.adjusted_bb = self.clip_background(foreground_mask, self.original_bb)
+
+        if (self.adjusted_bb != None and self.adjusted_bb.get_volume() <= 0.2 * self.original_bb.get_volume()):
+            self.adjusted_bb = None
 
         self.model_input = None
 

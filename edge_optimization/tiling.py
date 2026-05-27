@@ -19,6 +19,7 @@ from datetime import datetime
 from .background_clipping import *
 from .subdivided_cell import *
 from .clutter_metric import *
+from concurrent.futures import ThreadPoolExecutor
 
 # from ..train_utils import *
 
@@ -61,7 +62,7 @@ class DividedAnchorNet(nn.Module):
         plt.tight_layout()
         plt.show()
 
-    
+
 
     def forward(self, x, depth):
         depth = np.array(depth).squeeze().T
@@ -100,14 +101,18 @@ class DividedAnchorNet(nn.Module):
 
         end_original = time()
 
+        def process_cell(cell):
+            if cell.model_input is not None:
+                return self.anchornet(cell.model_input)
+            return None
+
         start = time()
 
-        for cell in cells:
-            if cell.model_input != None:
-                output = self.anchornet(cell.model_input)
-                xs.append(output)
-            else:
-                xs.append(None)
+        with ThreadPoolExecutor(max_workers=len(cells)) as executor:
+            xs = list(executor.map(process_cell, cells))
+
+        # for cell in cells:
+        #     xs.append(process_cell(cell))
 
         end = time()
 
