@@ -151,7 +151,12 @@ class AnchorGraspNet(nn.Module):
 
         # Using imagenet pre-trained model as feature extractor
         self.ratio = ratio
-        self.trconv = [nn.ModuleList(), nn.ModuleList(), nn.ModuleList(), nn.ModuleList()]
+        self.trconv = nn.ModuleList([
+            nn.ModuleList(),
+            nn.ModuleList(),
+            nn.ModuleList(),
+            nn.ModuleList()
+        ])
         # backbone
         self.feature_dim = 128
         self.backbone = Backbone(in_dim, self.feature_dim // 16)

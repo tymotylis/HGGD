@@ -420,7 +420,7 @@ if __name__ == '__main__':
     torch.manual_seed(args.random_seed)
 
     # Set-up output directories
-    net_desc = datetime.datetime.now().strftime('%y%m%d_%H%M%S')
+    net_desc = datetime.now().strftime('%y%m%d_%H%M%S')
     net_desc = net_desc + '_' + args.description
     net_desc = 'graspnet_test' + net_desc
 

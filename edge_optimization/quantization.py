@@ -15,6 +15,7 @@ from torch.ao.quantization.qconfig import QConfig
 from ..models.anchornet import AnchorGraspNet
 from ..models.localgraspnet import PointMultiGraspNet
 
+import re
 import functools
 
 
@@ -106,6 +107,27 @@ def is_quantized(dictionary):
 def rename(checkpoint, old, new):
     if old in checkpoint:
         checkpoint[new] = checkpoint.pop(old)
+
+
+def remap_anchornet(checkpoint):
+    new_sd = {}
+
+    for k, v in checkpoint.items():
+        if "model.trconv." in k:
+            parts = k.split(".")
+
+            old_idx = int(parts[2])
+
+            for branch in range(4):
+                new_parts = parts.copy()
+                new_parts = new_parts[:2] + [str(branch)] + new_parts[2:]
+                new_k = ".".join(new_parts)
+
+                new_sd[new_k] = v.clone() if hasattr(v, "clone") else v
+        else:
+            new_sd[k] = v
+
+    return new_sd
 
 # ChatGPT generated for convenience 
 # I had to change the structure of localnet, so that layers are fusable
@@ -333,7 +355,8 @@ def load_models(check_point, args):
     elif args.q_anchornet_type != "None":
         raise ValueError('Error! Incorrect anchornet quantization type argument!')
 
-    # anchornet.load_state_dict(check_point['anchor'])
+    check_point['anchor'] = remap_anchornet(check_point['anchor'])
+    anchornet.load_state_dict(check_point['anchor'])
 
     if args.q_localnet_type == "Normal" or args.q_localnet_type == "Optimized" or args.q_localnet_type == "QAT":
         localnet = prepare_model(localnet, args.q_localnet_type, None)
