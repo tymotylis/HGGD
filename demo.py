@@ -190,7 +190,8 @@ def inference(ori_rgb,
               output_times=False,
               use_cuda=True,
               log_times=False,
-              skip_postprocessing=False):
+              skip_postprocessing=False,
+              return_after_anchor=False):
     with torch.no_grad():
         global anchornet_times
         global localnet_times
@@ -232,86 +233,87 @@ def inference(ori_rgb,
             anchornet_output = anchornet(x)
         process_start_time=time()
 
-        pred_2d = (anchornet_output[0], anchornet_output[1], anchornet_output[2], anchornet_output[3], anchornet_output[4])
-        perpoint_features = anchornet_output[5]
+        if not return_after_anchor: 
+            pred_2d = (anchornet_output[0], anchornet_output[1], anchornet_output[2], anchornet_output[3], anchornet_output[4])
+            perpoint_features = anchornet_output[5]
 
-        loc_map, cls_mask, theta_offset, height_offset, width_offset = \
-            anchor_output_process(*pred_2d, sigma=args.sigma)
+            loc_map, cls_mask, theta_offset, height_offset, width_offset = \
+                anchor_output_process(*pred_2d, sigma=args.sigma)
 
-        # detect 2d grasp (x, y, theta)
-        rect_gg = detect_2d_grasp(loc_map,
-                                  cls_mask,
-                                  theta_offset,
-                                  height_offset,
-                                  width_offset,
-                                  ratio=args.ratio,
-                                  anchor_k=args.anchor_k,
-                                  anchor_w=args.anchor_w,
-                                  anchor_z=args.anchor_z,
-                                  mask_thre=args.heatmap_thres,
-                                  center_num=args.center_num,
-                                  grid_size=args.grid_size,
-                                  grasp_nms=args.grid_size,
-                                  reduce='max',
-                                  use_cuda=use_cuda)
+            # detect 2d grasp (x, y, theta)
+            rect_gg = detect_2d_grasp(loc_map,
+                                    cls_mask,
+                                    theta_offset,
+                                    height_offset,
+                                    width_offset,
+                                    ratio=args.ratio,
+                                    anchor_k=args.anchor_k,
+                                    anchor_w=args.anchor_w,
+                                    anchor_z=args.anchor_z,
+                                    mask_thre=args.heatmap_thres,
+                                    center_num=args.center_num,
+                                    grid_size=args.grid_size,
+                                    grasp_nms=args.grid_size,
+                                    reduce='max',
+                                    use_cuda=use_cuda)
 
-        # check 2d result
-        if rect_gg.size == 0:
-            print('No 2d grasp found')
-            return
+            # check 2d result
+            if rect_gg.size == 0:
+                print('No 2d grasp found')
+                return
 
-        # show heatmap
-        if vis_heatmap:
-            rgb_t = x[0, 1:].cpu().numpy().squeeze().transpose(2, 1, 0)
-            resized_rgb = Image.fromarray((rgb_t * 255.0).astype(np.uint8))
-            resized_rgb = np.array(
-                resized_rgb.resize((args.input_w, args.input_h))) / 255.0
-            depth_t = ori_depth.cpu().numpy().squeeze().T
-            plt.subplot(221)
-            plt.imshow(rgb_t)
-            plt.subplot(222)
-            plt.imshow(depth_t)
-            plt.subplot(223)
-            plt.imshow(loc_map.squeeze().T, cmap='jet')
-            plt.subplot(224)
-            rect_rgb = rect_gg.plot_rect_grasp_group(resized_rgb, 1, False)
-            plt.imshow(rect_rgb)
-            plt.tight_layout()
-            plt.show()
+            # show heatmap
+            if vis_heatmap:
+                rgb_t = x[0, 1:].cpu().numpy().squeeze().transpose(2, 1, 0)
+                resized_rgb = Image.fromarray((rgb_t * 255.0).astype(np.uint8))
+                resized_rgb = np.array(
+                    resized_rgb.resize((args.input_w, args.input_h))) / 255.0
+                depth_t = ori_depth.cpu().numpy().squeeze().T
+                plt.subplot(221)
+                plt.imshow(rgb_t)
+                plt.subplot(222)
+                plt.imshow(depth_t)
+                plt.subplot(223)
+                plt.imshow(loc_map.squeeze().T, cmap='jet')
+                plt.subplot(224)
+                rect_rgb = rect_gg.plot_rect_grasp_group(resized_rgb, 1, False)
+                plt.imshow(rect_rgb)
+                plt.tight_layout()
+                plt.show()
 
-        # feature fusion
-        points_all = feature_fusion(view_points[..., :3], perpoint_features,
-                                    xyzs)
-        rect_ggs = [rect_gg]
-        pc_group, valid_local_centers = data_process(
-            points_all,
-            ori_depth,
-            rect_ggs,
-            args.center_num,
-            args.group_num, (args.input_w, args.input_h),
-            min_points=32,
-            is_training=False,
-            use_cuda=use_cuda)
-        rect_gg = rect_ggs[0]
-        # batch_size == 1 when valid
-        points_all = points_all.squeeze()
+            # feature fusion
+            points_all = feature_fusion(view_points[..., :3], perpoint_features,
+                                        xyzs)
+            rect_ggs = [rect_gg]
+            pc_group, valid_local_centers = data_process(
+                points_all,
+                ori_depth,
+                rect_ggs,
+                args.center_num,
+                args.group_num, (args.input_w, args.input_h),
+                min_points=32,
+                is_training=False,
+                use_cuda=use_cuda)
+            rect_gg = rect_ggs[0]
+            # batch_size == 1 when valid
+            points_all = points_all.squeeze()
 
-        # get 2d grasp info (not grasp itself) for trainning
-        grasp_info = np.zeros((0, 3), dtype=np.float32)
-        g_thetas = rect_gg.thetas[None]
-        g_ws = rect_gg.widths[None]
-        g_ds = rect_gg.depths[None]
-        cur_info = np.vstack([g_thetas, g_ws, g_ds])
-        grasp_info = np.vstack([grasp_info, cur_info.T])
-        grasp_info = torch.from_numpy(grasp_info).to(dtype=torch.float32,
-                                                     device=device)
+            # get 2d grasp info (not grasp itself) for trainning
+            grasp_info = np.zeros((0, 3), dtype=np.float32)
+            g_thetas = rect_gg.thetas[None]
+            g_ws = rect_gg.widths[None]
+            g_ds = rect_gg.depths[None]
+            cur_info = np.vstack([g_thetas, g_ws, g_ds])
+            grasp_info = np.vstack([grasp_info, cur_info.T])
+            grasp_info = torch.from_numpy(grasp_info).to(dtype=torch.float32,
+                                                        device=device)
 
-        # localnet
-        localnet_start_time = time()
+            # localnet
+            localnet_start_time = time()
 
-        localnet_output = localnet([pc_group, grasp_info])
+            localnet_output = localnet([pc_group, grasp_info])
 
-        postprocess_start_time = time()
+            postprocess_start_time = time()
 
         if not skip_postprocessing:
             pred = localnet_output[1]
@@ -438,50 +440,59 @@ def setup_inference(use_cuda):
     anchornet.eval()
     localnet.eval()
 
-def test_tiling(ori_rgb, ori_depth, use_cuda):
+def test_tile_sizes(ori_rgb, ori_depth, use_cuda):
     global anchornet, localnet
 
-    scores = []
+    scene = 150#randrange(190)
+    view = 94#randrange(256)
 
-    for k in range(1):
+    print("Picked scene", scene, "view", view)
 
-        # scene = 150#randrange(190)
-        # view = 94#randrange(256)
+    ori_depth = np.array(Image.open(f"/mnt/d/GraspNet/scenes/scene_{scene:04d}/realsense/depth/{view:04d}.png"))
+    ori_rgb = np.array(Image.open(f"/mnt/d/GraspNet/scenes/scene_{scene:04d}/realsense/rgb/{view:04d}.png")) / 255.0
 
-        # print("Picked scene", scene, "view", view)
+    tile_sizes = [[1, 1], [2, 1], [3, 2], [4, 2], [5, 3], [6, 3], [7, 4], [8, 5], [9, 5], [10, 6], [11, 6], [12, 7]]
 
-        # ori_depth = np.array(Image.open(f"/mnt/d/GraspNet/scenes/scene_{scene:04d}/realsense/depth/{view:04d}.png"))
-        # ori_rgb = np.array(Image.open(f"/mnt/d/GraspNet/scenes/scene_{scene:04d}/realsense/rgb/{view:04d}.png")) / 255.0
+    for tile_size in tile_sizes:
+        print("Testing partition", tile_size)
+        anchornet = DividedAnchorNet(anchornet, tile_size, 0)
 
-        tile_sizes = [[1, 1], [2, 1], [3, 2], [4, 2], [5, 3], [6, 3], [7, 4], [8, 5], [9, 5], [10, 6], [11, 6], [12, 7]]
-        score = 0
-
-        for tile_size in tile_sizes:
-            print("Testing partition", tile_size)
-            anchornet = DividedAnchorNet(anchornet, tile_size)
-
-            for i in range(10):
-                inference(ori_rgb,
-                    ori_depth,
-                    vis_heatmap=False,
-                    vis_grasp=False, 
-                    output_times=False,
-                    use_cuda=use_cuda,
-                    log_times=False,
-                    skip_postprocessing=True)
-            
-            if tile_size == [1, 1]:
-                score += np.average(np.array(anchornet.times))
-            else:
-                score -= np.average(np.array(anchornet.times))
-            print("tiling time avg.", np.average(np.array(anchornet.times)), "original avg.", np.average(np.array(anchornet.times_original)))
+        for i in range(10):
+            inference(ori_rgb,
+                ori_depth,
+                vis_heatmap=False,
+                vis_grasp=False, 
+                output_times=False,
+                use_cuda=use_cuda,
+                log_times=False,
+                skip_postprocessing=True)
         
-            anchornet = anchornet.anchornet
+        print("tiling time avg.", np.average(np.array(anchornet.times)), "original avg.", np.average(np.array(anchornet.times_original)))
+    
+        anchornet = anchornet.anchornet
+
+def test_margin_values(ori_rgb, ori_depth, use_cuda):
+    global anchornet, localnet
+
+    for margin in range(0, 160, 10):
+        print("Testing margin", margin)
+        anchornet = DividedAnchorNet(anchornet, [4, 2], margin)
+
+        for i in range(10):
+            inference(ori_rgb,
+                ori_depth,
+                vis_heatmap=False,
+                vis_grasp=False, 
+                output_times=False,
+                use_cuda=use_cuda,
+                log_times=False,
+                skip_postprocessing=True,
+                return_after_anchor=True)
         
-        print("score", score)
-        scores.append([score, scene, view])
-        scores.sort(key=lambda x: x[0], reverse=True)
-        print(scores[:10])
+        print("tiling time avg.", np.average(np.array(anchornet.times)), "original avg.", np.average(np.array(anchornet.times_original)))
+    
+        anchornet = anchornet.anchornet
+    
 
     
 
@@ -497,17 +508,17 @@ if __name__ == '__main__':
     ori_rgb = np.array(Image.open(args.rgb_path)) / 255.0
     use_cuda = False
     # inference
-    pred_gg = inference(ori_rgb,
-                        ori_depth,
-                        vis_heatmap=False,
-                        vis_grasp=False, 
-                        output_times=True,
-                        use_cuda=use_cuda,
-                        skip_postprocessing=True)
+    # pred_gg = inference(ori_rgb,
+    #                     ori_depth,
+    #                     vis_heatmap=False,
+    #                     vis_grasp=False, 
+    #                     output_times=True,
+    #                     use_cuda=use_cuda,
+    #                     skip_postprocessing=True)
 
 
     if args.tiling == "Full-test":
-        test_tiling(ori_rgb, ori_depth, use_cuda)
+        test_margin_values(ori_rgb, ori_depth, use_cuda)
         sys.exit()
 
     # time test

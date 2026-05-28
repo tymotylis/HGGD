@@ -95,8 +95,8 @@ class Cell():
 
         self.adjusted_bb = self.clip_background(foreground_mask, self.original_bb)
 
-        if (self.adjusted_bb != None and self.adjusted_bb.get_volume() <= 128):
-            self.adjusted_bb = None
+        # if (self.adjusted_bb != None and self.adjusted_bb.get_volume() <= 128):
+        #     self.adjusted_bb = None
 
         self.model_input = None
 

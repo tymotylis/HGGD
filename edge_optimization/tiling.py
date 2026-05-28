@@ -24,7 +24,7 @@ from concurrent.futures import ThreadPoolExecutor
 # from ..train_utils import *
 
 class DividedAnchorNet(nn.Module):
-    def __init__(self, anchornet, partition):
+    def __init__(self, anchornet, partition, margin):
         super().__init__()
 
         self.partition = np.array(partition)
@@ -36,6 +36,7 @@ class DividedAnchorNet(nn.Module):
         self.clutter_debug = []
         self.times = []
         self.times_original = []
+        self.margin = margin
     
     def tensor_to_visualization(self, tensor):
         if tensor.shape[1] == 4:
@@ -77,7 +78,7 @@ class DividedAnchorNet(nn.Module):
         original_shape = np.array([x.shape[2], x.shape[3]])
 
         #partition = np.array([1, 1])# np.array([8, 4])# np.rint(original_shape / target_size) 
-        padding = np.array([0, 0]) 
+        padding = np.array([self.margin, self.margin]) 
         partitions_shape = np.ceil(original_shape / self.partition)
 
         # self.visualize_tensor(depth_img)
