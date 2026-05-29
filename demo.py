@@ -357,8 +357,8 @@ def inference(ori_rgb,
 
             np_anchornet_times = np.array(anchornet_times)
             np_localnet_times = np.array(localnet_times)
-            print(f'AnchorNet avg: {np.average(np_anchornet_times):.3f} ms (std: {np.std(np_anchornet_times):.3f}, n: {len(np_anchornet_times)})')
-            print(f'LocalNet avg: {np.average(np_localnet_times):.3f} ms (std: {np.std(np_localnet_times):.3f}, n: {len(np_localnet_times)})')
+            # print(f'AnchorNet avg: {np.average(np_anchornet_times):.3f} ms (std: {np.std(np_anchornet_times):.3f}, n: {len(np_anchornet_times)})')
+            # print(f'LocalNet avg: {np.average(np_localnet_times):.3f} ms (std: {np.std(np_localnet_times):.3f}, n: {len(np_localnet_times)})')
 
         # show grasp
         if vis_grasp:
@@ -474,11 +474,11 @@ def test_tile_sizes(ori_rgb, ori_depth, use_cuda):
 def test_margin_values(ori_rgb, ori_depth, use_cuda):
     global anchornet, localnet
 
-    for margin in range(0, 160, 10):
+    for margin in range(0, 160, 30):
         print("Testing margin", margin)
         anchornet = DividedAnchorNet(anchornet, [4, 2], margin)
 
-        for i in range(10):
+        for i in range(1):
             inference(ori_rgb,
                 ori_depth,
                 vis_heatmap=False,
@@ -517,14 +517,17 @@ if __name__ == '__main__':
     #                     skip_postprocessing=True)
 
 
-    if args.tiling == "Full-test":
-        test_margin_values(ori_rgb, ori_depth, use_cuda)
-        sys.exit()
+    # if args.tiling == "Full-test":
+        # test_margin_values(ori_rgb, ori_depth, use_cuda)
+        # sys.exit()
 
     # time test
     start = time()
     T = 100
-    for _ in range(T):
+
+    anchornet = DividedAnchorNet(anchornet, [4, 2], 30)
+
+    for o in range(T):
         pred_gg = inference(ori_rgb,
                             ori_depth,
                             vis_heatmap=False,
@@ -533,6 +536,10 @@ if __name__ == '__main__':
                             use_cuda=use_cuda,
                             log_times=True,
                             skip_postprocessing=True)
+
+        print(o, "tiling time avg.", np.average(np.array(anchornet.times)), "std", np.std(np.array(anchornet.times)), "original avg.", np.average(np.array(anchornet.times_original)))
+        
         if use_cuda:
             torch.cuda.synchronize()
+
     print('avg time ==', (time() - start) / T * 1e3, 'ms')
