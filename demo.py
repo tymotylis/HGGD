@@ -525,7 +525,7 @@ if __name__ == '__main__':
     start = time()
     T = 100
 
-    anchornet = DividedAnchorNet(anchornet, [4, 2], 30)
+    anchornet = DividedAnchorNet(anchornet, [4, 2], 0)
 
     for o in range(T):
         pred_gg = inference(ori_rgb,
@@ -537,7 +537,7 @@ if __name__ == '__main__':
                             log_times=True,
                             skip_postprocessing=True)
 
-        print(o, "tiling time avg.", np.average(np.array(anchornet.times)), "std", np.std(np.array(anchornet.times)), "original avg.", np.average(np.array(anchornet.times_original)))
+        print(o, "tiling time avg.", np.average(np.array(anchornet.times)), "std", np.std(np.array(anchornet.times)), "original avg.", np.average(np.array(anchornet.times_original)), "std", np.std(np.array(anchornet.times_original)))
         
         if use_cuda:
             torch.cuda.synchronize()

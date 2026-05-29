@@ -116,11 +116,18 @@ def remap_anchornet(checkpoint):
         if "model.trconv." in k:
             parts = k.split(".")
 
-            old_idx = int(parts[2])
-
             for branch in range(4):
                 new_parts = parts.copy()
                 new_parts = new_parts[:2] + [str(branch)] + new_parts[2:]
+                new_k = ".".join(new_parts)
+
+                new_sd[new_k] = v.clone() if hasattr(v, "clone") else v
+        elif "trconv." in k:
+            parts = k.split(".")
+
+            for branch in range(4):
+                new_parts = parts.copy()
+                new_parts = new_parts[:1] + [str(branch)] + new_parts[1:]
                 new_k = ".".join(new_parts)
 
                 new_sd[new_k] = v.clone() if hasattr(v, "clone") else v
