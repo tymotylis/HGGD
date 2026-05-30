@@ -8,9 +8,9 @@ from torch.ao.quantization.observer import MinMaxObserver
 from torch.ao.quantization.qconfig import QConfig
 
 # These are needed for generating checkpoints
-# from ..dataset.graspnet_dataset import GraspnetPointDataset
-# from ..train_graspnet import training_loop
-# from ..train_utils import *
+from ..dataset.graspnet_dataset import GraspnetPointDataset
+from ..train_graspnet import training_loop
+from ..train_utils import *
 
 from ..models.anchornet import AnchorGraspNet
 from ..models.localgraspnet import PointMultiGraspNet
@@ -113,18 +113,15 @@ def remap_anchornet(checkpoint):
     new_sd = {}
 
     for k, v in checkpoint.items():
-        if "model.trconv." in k:
-            parts = k.split(".")
+        parts = k.split(".")
 
+        if "model.trconv." in k and len(parts) == 6:
             for branch in range(4):
                 new_parts = parts.copy()
                 new_parts = new_parts[:2] + [str(branch)] + new_parts[2:]
                 new_k = ".".join(new_parts)
-
                 new_sd[new_k] = v.clone() if hasattr(v, "clone") else v
-        elif "trconv." in k:
-            parts = k.split(".")
-
+        elif "trconv." in k and len(parts) == 5:
             for branch in range(4):
                 new_parts = parts.copy()
                 new_parts = new_parts[:1] + [str(branch)] + new_parts[1:]
@@ -482,8 +479,7 @@ def prepare_model(model :nn.Module, q_type, q_scales):
     if isinstance(quant_model, AnchorGraspNet):
         quant_model = QuantStubbed(quant_model, 1, 6)
     elif isinstance(quant_model, PointMultiGraspNet):
-        if q_type == "Optimized" or q_type == "QAT":
-            quant_model.add_quant_stubs()
+        quant_model.add_quant_stubs(q_type == "Optimized" or q_type == "QAT")
         quant_model = QuantStubbed(quant_model, 2, 3)
     else:
         raise Exception("Unexpeccted model passed for quantization!")

@@ -454,7 +454,7 @@ if __name__ == '__main__':
     # Load checkpoint
     check_point = torch.load(args.checkpoint_path)
 
-    # reduced_mode = 20
+    reduced_mode = -1
     anchornet, localnet = load_models(check_point, args)
     anchornet = anchornet.cpu()
     localnet = localnet.cpu()
@@ -463,7 +463,7 @@ if __name__ == '__main__':
         print("Using the AnchorNet sub-divider!")
         #test_clutter_metric(args)
         #test_clipping(args)
-        anchornet = DividedAnchorNet(anchornet, [4, 2], 30)
+        # anchornet = DividedAnchorNet(anchornet, [4, 2], 30)
 
     inference(anchornet, localnet, check_point, reduced_mode=reduced_mode)
     evaluate(reduced_mode=reduced_mode)

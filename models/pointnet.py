@@ -31,18 +31,22 @@ class STNkd(nn.Module):
         self.fc3 = nn.Linear(256, k * k)
         self.relu = nn.ReLU()
 
+        self.quant_stubs = None
+        self.dequant_stubs = None
+
+        self.k = k
+
+    def add_quant_stubs(self, after_sens_analysis):
+        if after_sens_analysis:
+            self.seq1 = nn.Sequential(torch.quantization.DeQuantStub(), self.seq1, torch.quantization.QuantStub())
+            self.seq1[1].qconfig = None
+
         self.quant_stubs = nn.ModuleList(
             [torch.quantization.QuantStub() for _ in range(1)]
         )
         self.dequant_stubs = nn.ModuleList(
             [torch.quantization.DeQuantStub() for _ in range(1)]
         )
-
-        self.k = k
-
-    def add_quant_stubs(self):
-        self.seq1 = nn.Sequential(torch.quantization.DeQuantStub(), self.seq1, torch.quantization.QuantStub())
-        self.seq1[1].qconfig = None
         
     def forward(self, x):
         batchsize = x.size()[0]
@@ -94,15 +98,18 @@ class PointNetfeat(nn.Module):
         # self.bn3 = nn.BatchNorm1d(1024)
         self.seq3 = nn.Sequential(torch.nn.Conv1d(128, 1024, 1), nn.BatchNorm1d(1024))
 
+        self.quant_stubs = None
+        self.dequant_stubs = None
+
+    def add_quant_stubs(self, after_sens_analysis):
+        self.stn.add_quant_stubs(after_sens_analysis)
+
         self.quant_stubs = nn.ModuleList(
-            [torch.quantization.QuantStub() for _ in range(2)]
+            [torch.quantization.QuantStub() for _ in range(3)]
         )
         self.dequant_stubs = nn.ModuleList(
             [torch.quantization.DeQuantStub() for _ in range(2)]
         )
-
-    def add_quant_stubs(self):
-        self.stn.add_quant_stubs()
 
     def forward(self, x):
         # trans pc only and layer 1
@@ -123,8 +130,15 @@ class PointNetfeat(nn.Module):
         # x_p = F.relu(self.bn1(x_p))
 
         # concat rgbd features
+        if self.dequant_stubs != None:
+            x_p = self.dequant_stubs[0](x_p)
+            x = self.dequant_stubs[0](x)
+
         x = torch.cat([x_p, x[:, 3:]], 1)
         # feature trans and layer 2
+
+        if self.quant_stubs != None:
+            x = self.quant_stubs[2](x)
 
 
         # x = self.conv2(x)

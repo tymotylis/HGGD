@@ -113,7 +113,28 @@ def train(epoch, anchornet: nn.Module, localnet: nn.Module,
         x, y, _, _, _ = anchor_data
         x = x.cuda(non_blocking=True)
         target = [yy.cuda(non_blocking=True) for yy in y]
-        outputs = anchornet(x)
+        if isinstance(anchornet, DividedAnchorNet):
+
+            batch_outputs = []
+            x = x.cpu()
+            depths = depths.cpu()
+
+            for b in range(x.shape[0]):
+                out = anchornet(
+                    x[b:b+1],        
+                    depths[b:b+1]
+                )
+                batch_outputs.append(out)
+
+            outputs = tuple(
+                torch.cat([o[i].cuda() for o in batch_outputs], dim=0)
+                for i in range(len(batch_outputs[0]))
+            )
+
+            x = x.cuda()
+            depths = depths.cuda()
+        else:
+            outputs = anchornet(x)
         pred_2d = (outputs[0], outputs[1], outputs[2], outputs[3], outputs[4])
         perpoint_features = outputs[5] 
 
@@ -425,6 +446,8 @@ def run():
                                anchor_k=args.anchor_k)
     localnet = PointMultiGraspNet(3, args.anchor_num**2)
 
+    anchornet = DividedAnchorNet(anchornet, [4, 2], 30)
+
     # load checkpoint
     basic_ranges = torch.linspace(-1, 1, args.anchor_num + 1).cuda()
     basic_anchors = (basic_ranges[1:] + basic_ranges[:-1]) / 2
@@ -442,7 +465,7 @@ def run():
             print("No Epoch value in the checkpoint, assuming all epochs are finished.")
             start_epoch = args.epochs
 
-
+        ckpt['anchor'] = remap_anchornet(ckpt['anchor'])
         anchornet.load_state_dict(ckpt['anchor'])
         ckpt['local'] = remap_checkpoint(ckpt['local'])
         localnet.load_state_dict(ckpt['local'])
@@ -451,8 +474,8 @@ def run():
     # print_model(args, input_channels, anchornet, save_folder)
 
     # multi gpu
-    anchornet = nn.parallel.DataParallel(anchornet).cuda()
-    localnet = nn.parallel.DataParallel(localnet).cuda()
+    anchornet = anchornet.cuda()
+    localnet = localnet.cuda()
     logging.info('Done')
 
     epochs = args.epochs
@@ -464,14 +487,14 @@ def run():
     # Quantization
 
     #sensitivity_analysis(args, val_data, anchors, tb, optimizer, save_folder)
-    print("Post Training Quantization...")
-    localnet = localnet.cuda()
-    (anchornet, localnet) = Q_callibration_and_training(anchornet, localnet, val_data, anchors, args)
+    # print("Post Training Quantization...")
+    # localnet = localnet.cuda()
+    # (anchornet, localnet) = Q_callibration_and_training(anchornet, localnet, val_data, anchors, args)
 
     #anchornet = DividedAnchorNet(anchornet)
 
     logging.info('Post-Quantization Validation...')
-    val_results = validate(args.epochs + 1, anchornet, localnet, val_data, anchors, args, quantized_mode=True)
+    val_results = validate(args.epochs + 1, anchornet, localnet, val_data, anchors, args, quantized_mode=False)
     log_match_result(val_results, dis_criterion, rot_criterion)
     log_and_save(args,
                     tb,

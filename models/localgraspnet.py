@@ -44,32 +44,30 @@ class PointMultiGraspNet(nn.Module):
 
         self.quant_stubs = None 
         self.dequant_stubs = None 
+        self.temp_de = None
+        self.temp_q = None
 
-    def add_quant_stubs(self):
-        self.pointnet.add_quant_stubs()
+    def add_quant_stubs(self, after_sens_analysis):
+        print("after sens", after_sens_analysis)
+        self.pointnet.add_quant_stubs(after_sens_analysis)
 
-        self.info_layer = nn.Sequential(torch.quantization.DeQuantStub(), self.info_layer, torch.quantization.QuantStub())
-        self.info_layer[1].qconfig = None
+        if after_sens_analysis:
+            self.info_layer = nn.Sequential(torch.quantization.DeQuantStub(), self.info_layer)#, torch.quantization.QuantStub())
+            self.info_layer[1].qconfig = None
 
-        self.anchor_mlp = nn.Sequential(torch.quantization.DeQuantStub(),
-                                        self.anchor_mlp[0],
-                                        torch.quantization.QuantStub(),
-                                        self.anchor_mlp[1],
-                                        self.anchor_mlp[2],
-                                        torch.quantization.DeQuantStub(),
-                                        self.anchor_mlp[3],
-                                        torch.quantization.QuantStub())
-        self.anchor_mlp[1].qconfig = None
-        self.anchor_mlp[6].qconfig = None
+            self.anchor_mlp = nn.Sequential(torch.quantization.DeQuantStub(),
+                                            self.anchor_mlp[0],
+                                            torch.quantization.QuantStub(),
+                                            self.anchor_mlp[1],
+                                            self.anchor_mlp[2],
+                                            torch.quantization.DeQuantStub(),
+                                            self.anchor_mlp[3],
+                                            torch.quantization.QuantStub())
+            self.anchor_mlp[1].qconfig = None
+            self.anchor_mlp[6].qconfig = None
 
-        # self.offset_mlp = nn.Sequential(torch.quantization.DeQuantStub(),
-        #                                 self.offset_mlp[0],
-        #                                 torch.quantization.QuantStub(),
-        #                                 self.offset_mlp[1],
-        #                                 self.offset_mlp[2],
-        #                                 self.offset_mlp[3])
-        # self.offset_mlp[1].qconfig = None
-        
+        self.temp_de = torch.quantization.DeQuantStub()
+        self.temp_q = torch.quantization.QuantStub()
         
 
     def forward(self, input):
@@ -86,7 +84,15 @@ class PointMultiGraspNet(nn.Module):
         point_features = self.point_layer(features)
 
         info_features = self.info_layer(info)
+
+        if self.temp_de != None:
+            point_features = self.temp_de(point_features)
+            info_features = self.temp_de(info_features)
+
         x = torch.cat([point_features, info_features], 1)
+
+        if self.temp_q != None:
+            x = self.temp_q(x)
 
         # get anchors and offset
         # Anchors - a multi-label classification gives you the indexes of selected anchors

@@ -26,6 +26,7 @@ from .dataset.evaluation import (anchor_output_process, calculate_6d_match,
 from .dataset.evaluation_coll import collision_detect
 from .dataset.grasp import RectGraspGroup
 from .models.losses import compute_anchor_loss, compute_multicls_loss
+from .edge_optimization.tiling import *
 
 
 eval_scale = np.linspace(0.2, 1, 5)
@@ -266,7 +267,7 @@ def prepare_torch_and_logger(args, mode='train'):
     torch.manual_seed(args.random_seed)
 
     # Set-up output directories
-    net_desc = datetime.datetime.now().strftime('%y%m%d_%H%M%S')
+    net_desc = datetime.now().strftime('%y%m%d_%H%M%S')
     net_desc = net_desc + '_' + args.description
     if mode == 'test':
         net_desc = 'test' + net_desc
@@ -591,7 +592,12 @@ def validate(epoch, anchornet: nn.Module, localnet: nn.Module,
             if quantized_mode:
                 x = x.cpu()
 
-            outputs = anchornet(x)
+            if isinstance(anchornet, DividedAnchorNet):
+                outputs = anchornet(x.cpu(), depth.cpu())
+                x = x.cuda()
+                depth = depth.cuda()
+            else:
+                outputs = anchornet(x)
             
             pred_2d = (outputs[0].cuda(), outputs[1].cuda(), outputs[2].cuda(), outputs[3].cuda(), outputs[4].cuda())
             perpoint_features = outputs[5].cuda()

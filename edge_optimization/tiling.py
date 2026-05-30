@@ -32,7 +32,7 @@ class DividedAnchorNet(nn.Module):
         if isinstance(anchornet, torch.nn.DataParallel):
             self.anchornet = anchornet.module
 
-        self.anchornet = self.anchornet.cpu()
+        # self.anchornet = self.anchornet.cpu()
         self.clutter_debug = []
         self.times = []
         self.times_original = []
@@ -66,10 +66,21 @@ class DividedAnchorNet(nn.Module):
 
 
     def forward(self, x, depth):
+        # a_timer = time()
         depth = np.array(depth).squeeze().T
         depth = cv2.resize(depth, dsize=(640, 360), interpolation=cv2.INTER_CUBIC)
         # depth = np.array(x[0, 0].transpose(1, 0))
         rgb = np.array(x[0, 1:4].transpose(2, 0))
+
+        # img_0 = self.tensor_to_visualization(x_original[0])
+        # img_1 = self.tensor_to_visualization(x_celled[0])
+
+        # plt.subplot(221)
+        # plt.imshow(img_0)
+        # plt.subplot(222)
+        # plt.imshow(img_1)
+        # plt.tight_layout()
+        # plt.show()
 
         # print(depth.shape)
         # print(rgb.shape)
@@ -96,37 +107,44 @@ class DividedAnchorNet(nn.Module):
 
         xs = []
 
-        start_original = time()
+        # start_original = time()
 
-        x_original = self.anchornet(x)
+        # x_original = self.anchornet(x.cuda())
 
-        end_original = time()
+        # end_original = time()
 
         def process_cell(cell):
             if cell.model_input is not None:
-                return self.anchornet(cell.model_input)
+                return self.anchornet(cell.model_input.cuda())
             return None
 
-        start = time()
+        # start = time()
 
-        with ThreadPoolExecutor(max_workers=len(cells)) as executor:
-            xs = list(executor.map(process_cell, cells))
+        # with ThreadPoolExecutor(max_workers=len(cells)) as executor:
+        #     xs = list(executor.map(process_cell, cells))
 
-        # for cell in cells:
-        #     xs.append(process_cell(cell))
+        # b_timer = time()
 
-        end = time()
+        for cell in cells:
+            xs.append(process_cell(cell))
+
+        # end = time()
+        # c_timer = time()
 
 
 
-        self.times.append(end - start)
-        self.times_original.append(end_original - start_original)
-        # print("tiling time avg.", np.average(np.array(self.times)), "original avg.", np.average(np.array(self.times_original)))
+        # self.times.append(end - start)
+        # self.times_original.append(end_original - start_original)
 
-        # x_celled = reconstruct(xs, cells, self.partition, padding)
+        x_celled = reconstruct(xs, cells, self.partition, padding)
 
-        # img_0 = self.tensor_to_visualization(x_original[0])
-        # img_1 = self.tensor_to_visualization(x_celled[0])
+        # d_timer = time()
+
+        # print("preprocess_time", b_timer - a_timer , "anchornet time", c_timer - b_timer, "postprocess time", d_timer - c_timer)
+
+
+        # img_0 = self.tensor_to_visualization(x_original[0].detach().cpu())
+        # img_1 = self.tensor_to_visualization(x_celled[0].detach().cpu())
 
         # plt.subplot(221)
         # plt.imshow(img_0)
@@ -135,7 +153,8 @@ class DividedAnchorNet(nn.Module):
         # plt.tight_layout()
         # plt.show()
 
-        return x_original
+
+        return x_celled
 
 scene_num = 0
 view_num = 0
@@ -215,7 +234,7 @@ def reconstruct(model_outputs, cells, partition, padding):
             for cell_y in range(int(partition[1])):
                 to_rescale = None
                 if model_outputs[cell_i] != None:
-                    to_rescale = model_outputs[cell_i][i]
+                    to_rescale = model_outputs[cell_i][i].cpu()
 
                 cell_output = cells[cell_i].fit_output_to_size(to_rescale, desired_dim, i == 0)
 
