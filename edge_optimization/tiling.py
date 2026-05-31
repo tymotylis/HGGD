@@ -24,11 +24,17 @@ from concurrent.futures import ThreadPoolExecutor
 # from ..train_utils import *
 
 class DividedAnchorNet(nn.Module):
-    def __init__(self, anchornet, partition, margin):
+    def __init__(self, anchornet, partition, margin, train_mode):
         super().__init__()
 
         self.partition = np.array(partition)
+        self.margin = margin
         self.anchornet = anchornet
+
+        self.original_shape = np.array([640, 360])
+        self.padding = np.array([self.margin, self.margin]) 
+        self.partitions_shape = np.ceil(self.original_shape / self.partition)
+
         if isinstance(anchornet, torch.nn.DataParallel):
             self.anchornet = anchornet.module
 
@@ -36,7 +42,7 @@ class DividedAnchorNet(nn.Module):
         self.clutter_debug = []
         self.times = []
         self.times_original = []
-        self.margin = margin
+        self.train_mode = train_mode
     
     def tensor_to_visualization(self, tensor):
         if tensor.shape[1] == 4:
@@ -65,41 +71,19 @@ class DividedAnchorNet(nn.Module):
 
 
 
-    def forward(self, x, depth):
-        # a_timer = time()
-        depth = np.array(depth).squeeze().T
-        depth = cv2.resize(depth, dsize=(640, 360), interpolation=cv2.INTER_CUBIC)
-        # depth = np.array(x[0, 0].transpose(1, 0))
-        rgb = np.array(x[0, 1:4].transpose(2, 0))
+    def forward(self, x, depth = None):
 
-        # img_0 = self.tensor_to_visualization(x_original[0])
-        # img_1 = self.tensor_to_visualization(x_celled[0])
+        foreground_mask = None
 
-        # plt.subplot(221)
-        # plt.imshow(img_0)
-        # plt.subplot(222)
-        # plt.imshow(img_1)
-        # plt.tight_layout()
-        # plt.show()
+        if not self.train_mode:
+            depth = np.array(depth).squeeze().T
+            depth = cv2.resize(depth, dsize=(640, 360), interpolation=cv2.INTER_CUBIC)
+            rgb = np.array(x[0, 1:4].transpose(2, 0))
 
-        # print(depth.shape)
-        # print(rgb.shape)
+            bgClipper = BackgroundClipper(depth, rgb)
+            foreground_mask = bgClipper.foreground_mask
 
-        #target_size = 100
-        original_shape = np.array([x.shape[2], x.shape[3]])
-
-        #partition = np.array([1, 1])# np.array([8, 4])# np.rint(original_shape / target_size) 
-        padding = np.array([self.margin, self.margin]) 
-        partitions_shape = np.ceil(original_shape / self.partition)
-
-        # self.visualize_tensor(depth_img)
-
-
-        bgClipper = BackgroundClipper(depth, rgb)
-        foreground_mask = bgClipper.foreground_mask
-
-        # self.visualize_tensor(foreground_mask)
-        cells = subdivide(x, self.partition, partitions_shape, padding, foreground_mask)
+        cells = subdivide(x, self.partition, self.partitions_shape, self.padding, foreground_mask)
 
         # clutter_metrics = get_clutter_metric_in_cells(cells, rgb, bgClipper)
         # self.clutter_debug.append(clutter_metrics[0])
@@ -107,26 +91,16 @@ class DividedAnchorNet(nn.Module):
 
         xs = []
 
-        # start_original = time()
-
-        # x_original = self.anchornet(x.cuda())
-
-        # end_original = time()
-
         def process_cell(cell):
             if cell.model_input is not None:
-                return self.anchornet(cell.model_input.cuda())
+                return self.anchornet(cell.model_input)
             return None
 
-        # start = time()
+        with ThreadPoolExecutor(max_workers=len(cells)) as executor:
+            xs = list(executor.map(process_cell, cells))
 
-        # with ThreadPoolExecutor(max_workers=len(cells)) as executor:
-        #     xs = list(executor.map(process_cell, cells))
-
-        # b_timer = time()
-
-        for cell in cells:
-            xs.append(process_cell(cell))
+        # for cell in cells:
+        #     xs.append(process_cell(cell))
 
         # end = time()
         # c_timer = time()
@@ -136,15 +110,16 @@ class DividedAnchorNet(nn.Module):
         # self.times.append(end - start)
         # self.times_original.append(end_original - start_original)
 
-        x_celled = reconstruct(xs, cells, self.partition, padding)
+        x_celled = reconstruct(xs, cells, self.partition, self.padding)
 
         # d_timer = time()
 
         # print("preprocess_time", b_timer - a_timer , "anchornet time", c_timer - b_timer, "postprocess time", d_timer - c_timer)
 
+        # x_original = self.anchornet(x)
 
-        # img_0 = self.tensor_to_visualization(x_original[0].detach().cpu())
-        # img_1 = self.tensor_to_visualization(x_celled[0].detach().cpu())
+        # img_0 = self.tensor_to_visualization(x_original[0][0, ..., ..., ...].detach().cpu())
+        # img_1 = self.tensor_to_visualization(x_celled[0][0, ..., ..., ...].detach().cpu())
 
         # plt.subplot(221)
         # plt.imshow(img_0)
@@ -152,7 +127,6 @@ class DividedAnchorNet(nn.Module):
         # plt.imshow(img_1)
         # plt.tight_layout()
         # plt.show()
-
 
         return x_celled
 
@@ -234,7 +208,7 @@ def reconstruct(model_outputs, cells, partition, padding):
             for cell_y in range(int(partition[1])):
                 to_rescale = None
                 if model_outputs[cell_i] != None:
-                    to_rescale = model_outputs[cell_i][i].cpu()
+                    to_rescale = model_outputs[cell_i][i]
 
                 cell_output = cells[cell_i].fit_output_to_size(to_rescale, desired_dim, i == 0)
 
@@ -251,7 +225,7 @@ def reconstruct(model_outputs, cells, partition, padding):
             else:
                 channel_output = torch.cat([channel_output, column_output], dim=2)
 
-        if channel_output.shape != desired_dim:
+        if channel_output.shape[2] != desired_dim[2] or channel_output.shape[3] != desired_dim[3]:
             print("ERROR!!! Reshaping an output from ", channel_output.shape, "to", desired_dim, "!!!")
             channel_output = F.interpolate(channel_output, torch.Size([desired_dim[2], desired_dim[3]]))
         output.append(channel_output)
