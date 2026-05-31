@@ -224,6 +224,10 @@ def parse_args():
     parser.add_argument('--qat_epochs', type=int, default=10)
     parser.add_argument('--callibration_samples', type=int, default=256)
 
+    #Tiling
+    parser.add_argument('--tiling', type=bool, default=True)
+
+
     # Logging etc.
     parser.add_argument('--description',
                         type=str,

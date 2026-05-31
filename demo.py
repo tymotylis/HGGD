@@ -357,8 +357,8 @@ def inference(ori_rgb,
 
             np_anchornet_times = np.array(anchornet_times)
             np_localnet_times = np.array(localnet_times)
-            # print(f'AnchorNet avg: {np.average(np_anchornet_times):.3f} ms (std: {np.std(np_anchornet_times):.3f}, n: {len(np_anchornet_times)})')
-            # print(f'LocalNet avg: {np.average(np_localnet_times):.3f} ms (std: {np.std(np_localnet_times):.3f}, n: {len(np_localnet_times)})')
+            print(f'AnchorNet avg: {np.average(np_anchornet_times):.3f} ms (std: {np.std(np_anchornet_times):.3f}, n: {len(np_anchornet_times)})')
+            print(f'LocalNet avg: {np.average(np_localnet_times):.3f} ms (std: {np.std(np_localnet_times):.3f}, n: {len(np_localnet_times)})')
 
         # show grasp
         if vis_grasp:
@@ -525,7 +525,7 @@ if __name__ == '__main__':
     start = time()
     T = 100
 
-    anchornet = DividedAnchorNet(anchornet, [4, 2], 0)
+    # anchornet = DividedAnchorNet(anchornet, [4, 2], 0)
 
     for o in range(T):
         pred_gg = inference(ori_rgb,
@@ -537,7 +537,7 @@ if __name__ == '__main__':
                             log_times=True,
                             skip_postprocessing=True)
 
-        print(o, "tiling time avg.", np.average(np.array(anchornet.times)), "std", np.std(np.array(anchornet.times)), "original avg.", np.average(np.array(anchornet.times_original)), "std", np.std(np.array(anchornet.times_original)))
+        # print(o, "tiling time avg.", np.average(np.array(anchornet.times)), "std", np.std(np.array(anchornet.times)), "original avg.", np.average(np.array(anchornet.times_original)), "std", np.std(np.array(anchornet.times_original)))
         
         if use_cuda:
             torch.cuda.synchronize()

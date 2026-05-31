@@ -96,11 +96,11 @@ class DividedAnchorNet(nn.Module):
                 return self.anchornet(cell.model_input)
             return None
 
-        with ThreadPoolExecutor(max_workers=len(cells)) as executor:
-            xs = list(executor.map(process_cell, cells))
+        # with ThreadPoolExecutor(max_workers=len(cells)) as executor:
+        #     xs = list(executor.map(process_cell, cells))
 
-        # for cell in cells:
-        #     xs.append(process_cell(cell))
+        for cell in cells:
+            xs.append(process_cell(cell))
 
         # end = time()
         # c_timer = time()

@@ -436,7 +436,7 @@ def Q_callibration_and_training(anchornet :nn.Module, localnet :nn.Module, val_d
     if args.q_localnet_type != 'None':
         localnet_quant = convert_model(localnet_quant)
 
-    return (anchornet_quant, localnet_quant)    
+    return (anchornet_quant.cpu(), localnet_quant.cpu())    
 
 def convert_model(model :nn.Module):
     quant_model = model.cpu()

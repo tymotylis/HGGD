@@ -446,7 +446,8 @@ def run():
                                anchor_k=args.anchor_k)
     localnet = PointMultiGraspNet(3, args.anchor_num**2)
 
-    anchornet = DividedAnchorNet(anchornet, [4, 2], 30, True)
+    if args.tiling == 'Yes':
+        anchornet = DividedAnchorNet(anchornet, [4, 2], 30, True)
 
     # load checkpoint
     basic_ranges = torch.linspace(-1, 1, args.anchor_num + 1).cuda()
@@ -489,12 +490,14 @@ def run():
     #sensitivity_analysis(args, val_data, anchors, tb, optimizer, save_folder)
     # print("Post Training Quantization...")
     # localnet = localnet.cuda()
-    # (anchornet, localnet) = Q_callibration_and_training(anchornet, localnet, val_data, anchors, args)
 
-    #anchornet = DividedAnchorNet(anchornet)
+    quantized_mode = False
+    if args.q_anchornet_type != None or args.q_localnet_type != None:
+        (anchornet, localnet) = Q_callibration_and_training(anchornet, localnet, val_data, anchors, args)
+        quantized_mode = True
 
     logging.info('Post-Quantization Validation...')
-    val_results = validate(args.epochs + 1, anchornet, localnet, val_data, anchors, args, quantized_mode=False)
+    val_results = validate(args.epochs + 1, anchornet, localnet, val_data, anchors, args, quantized_mode=quantized_mode)
     log_match_result(val_results, dis_criterion, rot_criterion)
     log_and_save(args,
                     tb,
