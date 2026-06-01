@@ -537,7 +537,8 @@ if __name__ == '__main__':
                             log_times=True,
                             skip_postprocessing=True)
 
-        # print(o, "tiling time avg.", np.average(np.array(anchornet.times)), "std", np.std(np.array(anchornet.times)), "original avg.", np.average(np.array(anchornet.times_original)), "std", np.std(np.array(anchornet.times_original)))
+        if args.tiling == "Yes":
+            print(o, "tiling time avg.", np.average(np.array(anchornet.times)), "std", np.std(np.array(anchornet.times)))
         
         if use_cuda:
             torch.cuda.synchronize()
