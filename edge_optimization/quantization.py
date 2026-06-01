@@ -8,12 +8,14 @@ from torch.ao.quantization.observer import MinMaxObserver
 from torch.ao.quantization.qconfig import QConfig
 
 # These are needed for generating checkpoints
-from ..dataset.graspnet_dataset import GraspnetPointDataset
-from ..train_graspnet import training_loop
-from ..train_utils import *
+# from ..dataset.graspnet_dataset import GraspnetPointDataset
+# from ..train_graspnet import training_loop
+# from ..train_utils import *
 
 from ..models.anchornet import AnchorGraspNet
 from ..models.localgraspnet import PointMultiGraspNet
+from .tiling import *
+
 
 import re
 import functools
@@ -352,6 +354,9 @@ def load_models(check_point, args):
     # multi gpu
     # anchornet = anchornet.cuda()
     # localnet = localnet.cuda()
+
+    if args.tiling == "Yes":
+        anchornet = DividedAnchorNet(anchornet, [4, 2], 30, True)
     
     if args.q_anchornet_type == "8-bit" or args.q_anchornet_type == "4-bit" or args.q_anchornet_type == "QAT":
         anchornet = prepare_model(anchornet, args.q_anchornet_type, args.q_anchornet_scales)

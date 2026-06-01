@@ -118,11 +118,11 @@ class DividedAnchorNet(nn.Module):
 
         # x_original = self.anchornet(x)
 
-        # img_0 = self.tensor_to_visualization(x_original[0][0, ..., ..., ...].detach().cpu())
+        #img_0 = self.tensor_to_visualization(x_original[0][0, ..., ..., ...].detach().cpu())
         # img_1 = self.tensor_to_visualization(x_celled[0][0, ..., ..., ...].detach().cpu())
 
-        # plt.subplot(221)
-        # plt.imshow(img_0)
+        # # plt.subplot(221)
+        # # plt.imshow(img_0)
         # plt.subplot(222)
         # plt.imshow(img_1)
         # plt.tight_layout()

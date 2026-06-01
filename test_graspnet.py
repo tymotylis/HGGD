@@ -74,7 +74,7 @@ parser.add_argument('--q_localnet_type', type=str, default="None", help='None | 
 # parser.add_argument('--q_localnet_scales', type=str, default="Per-tensor", help='Per-tensor | Per-channel')
 
 # tiling
-parser.add_argument('--tiling', type=bool, default=False)
+parser.add_argument('--tiling', type=str, default='No')
 
 
 # others

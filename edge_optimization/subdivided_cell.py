@@ -158,7 +158,7 @@ class Cell():
             int((tile_coords[1] + 1) * tile_dimensions[1])).clip_to(self.original_image_bb)
 
     def clip_background(self, foreground_mask, designation):
-        if foreground_mask == None:
+        if foreground_mask is None:
             return BoundingBox(designation.x_min, designation.y_min, designation.x_max, designation.y_max)
 
         mask_cell = foreground_mask[designation.y_min:designation.y_max, designation.x_min:designation.x_max]
