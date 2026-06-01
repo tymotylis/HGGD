@@ -499,8 +499,8 @@ def test_margin_values(ori_rgb, ori_depth, use_cuda):
 if __name__ == '__main__':
     # load_parameters_parser()
 
-    # torch.set_num_threads(1)      
-    # torch.set_num_interop_threads(1)
+    torch.set_num_threads(1)      
+    torch.set_num_interop_threads(1)
 
     setup_inference(False)
     # read image and conver to tensor
@@ -537,7 +537,7 @@ if __name__ == '__main__':
                             log_times=True,
                             skip_postprocessing=True)
 
-        if args.tiling == "Yes":
+        if args.tiling != "No":
             print(o, "tiling time avg.", np.average(np.array(anchornet.times)), "std", np.std(np.array(anchornet.times)))
         
         if use_cuda:

@@ -66,7 +66,7 @@ class BoundingBox():
 
 class Cell():
 
-    def __init__(self, tile_coords, tile_count, tile_dimensions, padding, image, foreground_mask, scale_factor = 1):
+    def __init__(self, tile_coords, tile_count, tile_dimensions, padding, image, foreground_mask, rescale, scale_factor = 1):
         if scale_factor != 1:
             tile_dimensions = [int(tile_dimensions[0] * scale_factor), int(tile_dimensions[1] * scale_factor)]
             padding = [int(padding[0] * scale_factor), int(padding[1] * scale_factor)]
@@ -94,6 +94,7 @@ class Cell():
         self.original_bb = self.get_bb(tile_coords, tile_dimensions)
 
         self.adjusted_bb = self.clip_background(foreground_mask, self.original_bb)
+        self.rescale = rescale
 
         # if (self.adjusted_bb != None and self.adjusted_bb.get_volume() <= 128):
         #     self.adjusted_bb = None
@@ -101,6 +102,9 @@ class Cell():
         self.model_input = None
 
         if self.adjusted_bb != None:
+            if not self.rescale:
+                self.adjusted_bb = BoundingBox(self.original_bb.x_min, self.original_bb.y_min, self.original_bb.x_max, self.original_bb.y_max)
+
             self.adjusted_bb_padded = self.adjusted_bb.with_padding(padding, self.original_image_bb)
             self.model_input = self.adjusted_bb_padded.clip_model_input(image)
 

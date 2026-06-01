@@ -24,7 +24,7 @@ from concurrent.futures import ThreadPoolExecutor
 # from ..train_utils import *
 
 class DividedAnchorNet(nn.Module):
-    def __init__(self, anchornet, partition, margin, train_mode):
+    def __init__(self, anchornet, partition, margin, train_mode, rescale_cells):
         super().__init__()
 
         self.partition = np.array(partition)
@@ -43,6 +43,7 @@ class DividedAnchorNet(nn.Module):
         self.times = []
         self.times_original = []
         self.train_mode = train_mode
+        self.rescale_cells = rescale_cells
     
     def tensor_to_visualization(self, tensor):
         if tensor.shape[1] == 4:
@@ -83,7 +84,7 @@ class DividedAnchorNet(nn.Module):
             bgClipper = BackgroundClipper(depth, rgb)
             foreground_mask = bgClipper.foreground_mask
 
-        cells = subdivide(x, self.partition, self.partitions_shape, self.padding, foreground_mask)
+        cells = subdivide(x, self.partition, self.partitions_shape, self.padding, foreground_mask, self.rescale_cells)
 
         # clutter_metrics = get_clutter_metric_in_cells(cells, rgb, bgClipper)
         # self.clutter_debug.append(clutter_metrics[0])
@@ -110,7 +111,7 @@ class DividedAnchorNet(nn.Module):
 
 
 
-        # self.times.append(end - start)
+        self.times.append(end - start)
         # self.times_original.append(end_original - start_original)
 
         x_celled = reconstruct(xs, cells, self.partition, self.padding)
@@ -183,11 +184,11 @@ def get_random_scene(args):
 
     return get_sample(args, scene, view)
 
-def subdivide(image, partition, partitions_size, padding, foreground_mask):
+def subdivide(image, partition, partitions_size, padding, foreground_mask, rescale):
     cells = []
     for cell_x in range(int(partition[0])):
         for cell_y in range(int(partition[1])):
-            cells.append(Cell([cell_x, cell_y], partition, partitions_size, padding, image, foreground_mask, 1))
+            cells.append(Cell([cell_x, cell_y], partition, partitions_size, padding, image, foreground_mask, rescale, 1))
 
     return cells
 

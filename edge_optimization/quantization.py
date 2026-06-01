@@ -355,8 +355,8 @@ def load_models(check_point, args):
     # anchornet = anchornet.cuda()
     # localnet = localnet.cuda()
 
-    if args.tiling == "Yes":
-        anchornet = DividedAnchorNet(anchornet, [4, 2], 30, False)
+    if args.tiling == "Yes" or args.tiling == "No-rescale":
+        anchornet = DividedAnchorNet(anchornet, [4, 2], 30, False, args.tiling == "Yes")
     
     if args.q_anchornet_type == "8-bit" or args.q_anchornet_type == "4-bit" or args.q_anchornet_type == "QAT":
         anchornet = prepare_model(anchornet, args.q_anchornet_type, args.q_anchornet_scales)
