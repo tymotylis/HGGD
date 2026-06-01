@@ -596,12 +596,12 @@ def validate(epoch, anchornet: nn.Module, localnet: nn.Module,
             if quantized_mode:
                 x = x.cpu()
 
-            # if isinstance(anchornet, DividedAnchorNet):
-            #     outputs = anchornet(x.cpu(), depth.cpu())
-            #     x = x.cuda()
-            #     depth = depth.cuda()
-            # else:
-            outputs = anchornet(x)
+            if args.tiling == "Yes":
+                outputs = anchornet([x.cpu(), depth.cpu()])
+                x = x.cuda()
+                depth = depth.cuda()
+            else:
+                outputs = anchornet(x)
             
             pred_2d = (outputs[0].cuda(), outputs[1].cuda(), outputs[2].cuda(), outputs[3].cuda(), outputs[4].cuda())
             perpoint_features = outputs[5].cuda()

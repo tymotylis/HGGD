@@ -481,8 +481,10 @@ def prepare_model(model :nn.Module, q_type, q_scales):
     qconfig = load_qconfig(quant_model, q_type, q_scales)
 
     # Insert stubs
-    if isinstance(quant_model, AnchorGraspNet) or isinstance(model, DividedAnchorNet):
+    if isinstance(quant_model, AnchorGraspNet):
         quant_model = QuantStubbed(quant_model, 1, 6)
+    elif isinstance(model, DividedAnchorNet):
+        quant_model = QuantStubbed(quant_model, 2, 6)
     elif isinstance(quant_model, PointMultiGraspNet):
         quant_model.add_quant_stubs(q_type == "Optimized" or q_type == "QAT")
         quant_model = QuantStubbed(quant_model, 2, 3)

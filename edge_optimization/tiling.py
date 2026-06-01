@@ -29,7 +29,7 @@ class DividedAnchorNet(nn.Module):
 
         self.partition = np.array(partition)
         self.margin = margin
-        self.anchornet = anchornet
+        self.anchornet = anchornet.cpu()
 
         self.original_shape = np.array([640, 360])
         self.padding = np.array([self.margin, self.margin]) 
@@ -38,7 +38,7 @@ class DividedAnchorNet(nn.Module):
         if isinstance(anchornet, torch.nn.DataParallel):
             self.anchornet = anchornet.module
 
-        # self.anchornet = self.anchornet.cpu()
+        self.anchornet = self.anchornet.cpu()
         self.clutter_debug = []
         self.times = []
         self.times_original = []
@@ -72,8 +72,9 @@ class DividedAnchorNet(nn.Module):
 
 
 
-    def forward(self, x, depth = None):
-
+    def forward(self, input):
+        x = input[0].cpu()
+        depth = input[1].cpu()
         foreground_mask = None
 
         if not self.train_mode:
@@ -99,19 +100,19 @@ class DividedAnchorNet(nn.Module):
 
         start = time()
 
-        with ThreadPoolExecutor(max_workers=len(cells)) as executor:
-            xs = list(executor.map(process_cell, cells))
+        # with ThreadPoolExecutor(max_workers=len(cells)) as executor:
+        #     xs = list(executor.map(process_cell, cells))
 
 
-        # for cell in cells:
-        #     xs.append(process_cell(cell))
+        for cell in cells:
+            xs.append(process_cell(cell))
 
         end = time()
         # c_timer = time()
 
 
 
-        self.times.append(end - start)
+        # self.times.append(end - start)
         # self.times_original.append(end_original - start_original)
 
         x_celled = reconstruct(xs, cells, self.partition, self.padding)
@@ -131,6 +132,10 @@ class DividedAnchorNet(nn.Module):
         # plt.imshow(img_1)
         # plt.tight_layout()
         # plt.show()
+        # print("RETURN")
+        # for asdlkasd in x_celled:
+        #     asdlkasd = asdlkasd.cuda()
+
 
         return x_celled
 

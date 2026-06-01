@@ -113,28 +113,30 @@ def train(epoch, anchornet: nn.Module, localnet: nn.Module,
         x, y, _, _, _ = anchor_data
         x = x.cuda(non_blocking=True)
         target = [yy.cuda(non_blocking=True) for yy in y]
-        # if isinstance(anchornet, DividedAnchorNet):
+        if args.tiling == "Yes":
 
-        #     batch_outputs = []
-        #     x = x.cpu()
-        #     depths = depths.cpu()
+            batch_outputs = []
+            x = x.cpu()
+            depths = depths.cpu()
 
-        #     for b in range(x.shape[0]):
-        #         out = anchornet(
-        #             x[b:b+1],        
-        #             depths[b:b+1]
-        #         )
-        #         batch_outputs.append(out)
+            for b in range(x.shape[0]):
+                # x = x.cuda()
+                # depths = depths.cuda()
+                out = anchornet(
+                    [x[b:b+1],        
+                    depths[b:b+1]]
+                )
+                batch_outputs.append(out)
 
-        #     outputs = tuple(
-        #         torch.cat([o[i].cuda() for o in batch_outputs], dim=0)
-        #         for i in range(len(batch_outputs[0]))
-        #     )
+            outputs = tuple(
+                torch.cat([o[i].cuda() for o in batch_outputs], dim=0)
+                for i in range(len(batch_outputs[0]))
+            )
 
-        #     x = x.cuda()
-        #     depths = depths.cuda()
-        # else:
-        outputs = anchornet(x)
+            x = x.cuda()
+            depths = depths.cuda()
+        else:
+            outputs = anchornet(x)
         pred_2d = (outputs[0], outputs[1], outputs[2], outputs[3], outputs[4])
         perpoint_features = outputs[5] 
 
@@ -447,7 +449,7 @@ def run():
     localnet = PointMultiGraspNet(3, args.anchor_num**2)
 
     if args.tiling == 'Yes':
-        anchornet = DividedAnchorNet(anchornet, [4, 2], 30, True, False)
+        anchornet = DividedAnchorNet(anchornet, [4, 2], 30, False, True)
 
     # load checkpoint
     basic_ranges = torch.linspace(-1, 1, args.anchor_num + 1).cuda()
@@ -475,7 +477,7 @@ def run():
     # print_model(args, input_channels, anchornet, save_folder)
 
     # multi gpu
-    anchornet = anchornet.cuda()
+    # anchornet = anchornet.cuda()
     localnet = localnet.cuda()
     logging.info('Done')
 
