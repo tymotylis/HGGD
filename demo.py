@@ -224,6 +224,13 @@ def inference(ori_rgb,
         x = torch.concat([depth[None], rgb], 1)
         x = x.to(device=device, dtype=torch.float32)
 
+        # Decreases inference time on AnchorNet
+        num_threads = torch.get_num_threads()
+        num_interop_threads = torch.get_num_interop_threads()
+
+        torch.set_num_threads(1)      
+        torch.set_num_interop_threads(1)
+
         # 2d prediction
         anchornet_start_time = time()
 
@@ -232,6 +239,9 @@ def inference(ori_rgb,
         else:
             anchornet_output = anchornet(x)
         process_start_time=time()
+
+        torch.set_num_threads(num_threads)      
+        torch.set_num_interop_threads(num_interop_threads)
 
         if not return_after_anchor: 
             pred_2d = (anchornet_output[0], anchornet_output[1], anchornet_output[2], anchornet_output[3], anchornet_output[4])
@@ -498,10 +508,6 @@ def test_margin_values(ori_rgb, ori_depth, use_cuda):
 
 if __name__ == '__main__':
     # load_parameters_parser()
-
-    torch.set_num_threads(1)      
-    torch.set_num_interop_threads(1)
-
     setup_inference(False)
     # read image and conver to tensor
     ori_depth = np.array(Image.open(args.depth_path))
