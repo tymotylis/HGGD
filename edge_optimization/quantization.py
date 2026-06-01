@@ -8,9 +8,9 @@ from torch.ao.quantization.observer import MinMaxObserver
 from torch.ao.quantization.qconfig import QConfig
 
 # These are needed for generating checkpoints
-# from ..dataset.graspnet_dataset import GraspnetPointDataset
-# from ..train_graspnet import training_loop
-# from ..train_utils import *
+from ..dataset.graspnet_dataset import GraspnetPointDataset
+from ..train_graspnet import training_loop
+from ..train_utils import *
 
 from ..models.anchornet import AnchorGraspNet
 from ..models.localgraspnet import PointMultiGraspNet
@@ -209,7 +209,7 @@ def fuse_all(model):
 
 def load_qconfig(model, q_type, q_scales):   
     torch.backends.quantized.engine = "qnnpack"
-    if isinstance(model, AnchorGraspNet):
+    if isinstance(model, AnchorGraspNet) or isinstance(model, DividedAnchorNet):
         if q_scales == "Symmetric":
             activation_scales = torch.per_tensor_symmetric
             activation_dtype = torch.qint8
@@ -481,7 +481,7 @@ def prepare_model(model :nn.Module, q_type, q_scales):
     qconfig = load_qconfig(quant_model, q_type, q_scales)
 
     # Insert stubs
-    if isinstance(quant_model, AnchorGraspNet):
+    if isinstance(quant_model, AnchorGraspNet) or isinstance(model, DividedAnchorNet):
         quant_model = QuantStubbed(quant_model, 1, 6)
     elif isinstance(quant_model, PointMultiGraspNet):
         quant_model.add_quant_stubs(q_type == "Optimized" or q_type == "QAT")

@@ -447,7 +447,7 @@ def run():
     localnet = PointMultiGraspNet(3, args.anchor_num**2)
 
     if args.tiling == 'Yes':
-        anchornet = DividedAnchorNet(anchornet, [4, 2], 30, True)
+        anchornet = DividedAnchorNet(anchornet, [4, 2], 30, True, False)
 
     # load checkpoint
     basic_ranges = torch.linspace(-1, 1, args.anchor_num + 1).cuda()

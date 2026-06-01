@@ -225,7 +225,7 @@ def parse_args():
     parser.add_argument('--callibration_samples', type=int, default=256)
 
     #Tiling
-    parser.add_argument('--tiling', type=bool, default=True)
+    parser.add_argument('--tiling', type=str, default="No")
 
 
     # Logging etc.
