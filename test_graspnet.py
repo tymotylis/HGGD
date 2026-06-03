@@ -173,8 +173,8 @@ def inference(anchornet, localnet, check_point, reduced_mode = -1):
 
             start2 = time()
 
-            if isinstance(anchornet, DividedAnchorNet):
-                anchornet_output = anchornet(x, ori_depth)
+            if args.tiling == "Yes":
+                anchornet_output = anchornet([x, ori_depth])
             else:
                 anchornet_output = anchornet(x)
 

@@ -8,9 +8,9 @@ from torch.ao.quantization.observer import MinMaxObserver
 from torch.ao.quantization.qconfig import QConfig
 
 # These are needed for generating checkpoints
-from ..dataset.graspnet_dataset import GraspnetPointDataset
-from ..train_graspnet import training_loop
-from ..train_utils import *
+# from ..dataset.graspnet_dataset import GraspnetPointDataset
+# from ..train_graspnet import training_loop
+# from ..train_utils import *
 
 from ..models.anchornet import AnchorGraspNet
 from ..models.localgraspnet import PointMultiGraspNet
@@ -88,6 +88,8 @@ class QuantStubbed(nn.Module):
 
         for i in range(self.input_count):
             x[i] = self.quant_stubs[i](x[i])
+
+        # x[1] = self.dequant_stubs[0](x[1])
         
         if len(x) == 1:
             x = self.model(x[0])

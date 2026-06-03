@@ -67,7 +67,10 @@ parser.add_argument('--q_anchornet_scales', type=str, default="Affine", help='Sy
 
 parser.add_argument('--q_localnet_type', type=str, default="None", help='None | Normal | Optimized | QAT')
 
+# Tiling
 parser.add_argument('--tiling', type=str, default="None", help='None | Full-test')
+parser.add_argument('--time', type=str, default='AnchorNet')
+
 
 args = parser.parse_args()
 
@@ -227,8 +230,8 @@ def inference(ori_rgb,
         # 2d prediction
         anchornet_start_time = time()
 
-        if isinstance(anchornet, DividedAnchorNet):
-            anchornet_output = anchornet(x, ori_depth)
+        if args.tiling == "Yes":
+            anchornet_output = anchornet([x, ori_depth])
         else:
             anchornet_output = anchornet(x)
         process_start_time=time()
@@ -345,9 +348,11 @@ def inference(ori_rgb,
             print()
             print('total time:', (finished_time - preprocess_start_time) * 1000, " ms")
             print('pre-processing time:', (anchornet_start_time - preprocess_start_time) * 1000, " ms")
-            print('AnchorNet time:', (process_start_time - anchornet_start_time) * 1000, " ms")
+            if args.time == "AnchorNet":
+                print('AnchorNet time:', (process_start_time - anchornet_start_time) * 1000, " ms")
             print('processing time:', (localnet_start_time - process_start_time) * 1000, " ms")
-            print('LocalNet time:', (postprocess_start_time - localnet_start_time) * 1000, " ms")
+            if args.time == "LocalNet":
+                print('LocalNet time:', (postprocess_start_time - localnet_start_time) * 1000, " ms")
             print('post-processing time:', (finished_time - postprocess_start_time) * 1000, " ms")
             print()
 
@@ -357,8 +362,10 @@ def inference(ori_rgb,
 
             np_anchornet_times = np.array(anchornet_times)
             np_localnet_times = np.array(localnet_times)
-            print(f'AnchorNet avg: {np.average(np_anchornet_times):.3f} ms (std: {np.std(np_anchornet_times):.3f}, n: {len(np_anchornet_times)})')
-            print(f'LocalNet avg: {np.average(np_localnet_times):.3f} ms (std: {np.std(np_localnet_times):.3f}, n: {len(np_localnet_times)})')
+            if args.time == "AnchorNet":
+                print(f'AnchorNet avg: {np.average(np_anchornet_times):.3f} ms (std: {np.std(np_anchornet_times):.3f}, n: {len(np_anchornet_times)})')
+            if args.time == "LocalNet":
+                print(f'LocalNet avg: {np.average(np_localnet_times):.3f} ms (std: {np.std(np_localnet_times):.3f}, n: {len(np_localnet_times)})')
 
         # show grasp
         if vis_grasp:
@@ -399,20 +406,20 @@ def setup_inference(use_cuda):
 
     # Init the model
     global anchornet, localnet
-    anchornet = AnchorGraspNet(in_dim=4,
-                               ratio=args.ratio,
-                               anchor_k=args.anchor_k)
-    localnet = PointMultiGraspNet(info_size=3, k_cls=args.anchor_num**2)
+    # anchornet = AnchorGraspNet(in_dim=4,
+    #                            ratio=args.ratio,
+    #                            anchor_k=args.anchor_k)
+    # localnet = PointMultiGraspNet(info_size=3, k_cls=args.anchor_num**2)
 
-    # gpu
-    anchornet = anchornet
-    localnet = localnet
+    # # gpu
+    # anchornet = anchornet
+    # localnet = localnet
 
-    if use_cuda:
-        anchornet = anchornet.cuda()
-        localnet = localnet.cuda()
+    # if use_cuda:
+    #     anchornet = anchornet.cuda()
+    #     localnet = localnet.cuda()
 
-    # Load checkpoint
+    # # Load checkpoint
     if use_cuda:
         check_point = torch.load(args.checkpoint_path)
     else:
@@ -443,8 +450,8 @@ def setup_inference(use_cuda):
 def test_tile_sizes(ori_rgb, ori_depth, use_cuda):
     global anchornet, localnet
 
-    scene = 150#randrange(190)
-    view = 94#randrange(256)
+    scene = randrange(190)
+    view = randrange(256)
 
     print("Picked scene", scene, "view", view)
 
@@ -499,8 +506,9 @@ def test_margin_values(ori_rgb, ori_depth, use_cuda):
 if __name__ == '__main__':
     # load_parameters_parser()
 
-    torch.set_num_threads(1)      
-    torch.set_num_interop_threads(1)
+    if args.time == "AnchorNet":
+        torch.set_num_threads(1)      
+        torch.set_num_interop_threads(1)
 
     setup_inference(False)
     # read image and conver to tensor
@@ -537,8 +545,11 @@ if __name__ == '__main__':
                             log_times=True,
                             skip_postprocessing=True)
 
-        if args.tiling != "No":
-            print(o, "tiling time avg.", np.average(np.array(anchornet.times)), "std", np.std(np.array(anchornet.times)))
+        if args.tiling != "No" and args.time == "AnchorNet":
+            if isinstance(anchornet, QuantStubbed):
+                print(o, "tiling time avg.", np.average(np.array(anchornet.model.times)), "std", np.std(np.array(anchornet.model.times)))
+            else:
+                print(o, "tiling time avg.", np.average(np.array(anchornet.times)), "std", np.std(np.array(anchornet.times)))
         
         if use_cuda:
             torch.cuda.synchronize()

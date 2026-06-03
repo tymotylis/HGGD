@@ -74,15 +74,15 @@ class DividedAnchorNet(nn.Module):
 
     def forward(self, input):
         x = input[0].cpu()
-        depth = input[1].cpu()
+        depth = input[1].cpu().dequantize()
         foreground_mask = None
 
         if not self.train_mode:
             depth = np.array(depth).squeeze().T
             depth = cv2.resize(depth, dsize=(640, 360), interpolation=cv2.INTER_CUBIC)
-            rgb = np.array(x[0, 1:4].transpose(2, 0))
+            # rgb = np.array(x[0, 1:4].transpose(2, 0))
 
-            bgClipper = BackgroundClipper(depth, rgb)
+            bgClipper = BackgroundClipper(depth, None)
             foreground_mask = bgClipper.foreground_mask
 
         cells = subdivide(x, self.partition, self.partitions_shape, self.padding, foreground_mask, self.rescale_cells)
@@ -100,19 +100,19 @@ class DividedAnchorNet(nn.Module):
 
         start = time()
 
-        # with ThreadPoolExecutor(max_workers=len(cells)) as executor:
-        #     xs = list(executor.map(process_cell, cells))
+        with ThreadPoolExecutor(max_workers=len(cells)) as executor:
+            xs = list(executor.map(process_cell, cells))
 
 
-        for cell in cells:
-            xs.append(process_cell(cell))
+        # for cell in cells:
+        #     xs.append(process_cell(cell))
 
         end = time()
         # c_timer = time()
 
 
 
-        # self.times.append(end - start)
+        self.times.append(end - start)
         # self.times_original.append(end_original - start_original)
 
         x_celled = reconstruct(xs, cells, self.partition, self.padding)
@@ -124,17 +124,14 @@ class DividedAnchorNet(nn.Module):
         # x_original = self.anchornet(x)
 
         #img_0 = self.tensor_to_visualization(x_original[0][0, ..., ..., ...].detach().cpu())
-        # img_1 = self.tensor_to_visualization(x_celled[0][0, ..., ..., ...].detach().cpu())
+        # img_1 = self.tensor_to_visualization(x_celled[0][0, ..., ..., ...].dequantize().detach().cpu())
 
-        # # plt.subplot(221)
-        # # plt.imshow(img_0)
+        # # # plt.subplot(221)
+        # # # plt.imshow(img_0)
         # plt.subplot(222)
         # plt.imshow(img_1)
         # plt.tight_layout()
         # plt.show()
-        # print("RETURN")
-        # for asdlkasd in x_celled:
-        #     asdlkasd = asdlkasd.cuda()
 
 
         return x_celled
@@ -222,9 +219,9 @@ def reconstruct(model_outputs, cells, partition, padding):
                 cell_output = cells[cell_i].fit_output_to_size(to_rescale, desired_dim, i == 0)
 
                 if column_output is None:
-                    column_output = cell_output
+                    column_output = cell_output.dequantize()
                 else:
-                    column_output = torch.cat([column_output, cell_output], dim=3)
+                    column_output = torch.cat([column_output, cell_output.dequantize()], dim=3)
 
                 j += 1
                 cell_i += 1
@@ -232,7 +229,7 @@ def reconstruct(model_outputs, cells, partition, padding):
             if channel_output == None:
                 channel_output = column_output
             else:
-                channel_output = torch.cat([channel_output, column_output], dim=2)
+                channel_output = torch.cat([channel_output, column_output.dequantize()], dim=2)
 
         if channel_output.shape[2] != desired_dim[2] or channel_output.shape[3] != desired_dim[3]:
             print("ERROR!!! Reshaping an output from ", channel_output.shape, "to", desired_dim, "!!!")
